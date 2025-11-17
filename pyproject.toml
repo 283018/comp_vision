@@ -1,0 +1,29 @@
+[project]
+name = "comp-vision"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "cupy-cuda12x>=13.6.0",
+    "datasets>=4.4.1",
+    "dotenv>=0.9.9",
+    "fiftyone>=1.10.0",
+    "icecream>=2.1.8",
+    "ipykernel>=7.1.0",
+    "matplotlib>=3.10.7",
+    "niquests>=3.15.2",
+    "numpy>=2.3.4",
+    "nvidia-cudnn-frontend>=1.16.0",
+    "opencv-python>=4.11.0.86",
+    "optuna>=4.6.0",
+    "pandas>=2.3.3",
+    "pillow>=12.0.0",
+    "pip>=25.3",
+    "polars>=1.35.2",
+    "pytz>=2025.2",
+    "scipy>=1.16.3",
+    "setuptools>=80.9.0",
+    "types-tensorflow>=2.18.0.20251008",
+    "wheel>=0.45.1",
+]
