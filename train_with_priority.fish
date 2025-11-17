@@ -1,7 +1,7 @@
 #!/usr/bin/env fish
 
 # disable annoying tf warning on import
-set -x TF_CPP_MIN_LOG_LEVEL 3
+set -x TF_CPP_MIN_LOG_LEVEL 1
 
 set script $argv[1]
 set rest_args
