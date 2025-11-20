@@ -13,3 +13,7 @@ wheels/
 .charm
 
 *.env
+
+training_logs
+
+*.keras
