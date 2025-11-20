@@ -82,11 +82,11 @@ class TrainingMonitor(tf.keras.callbacks.Callback):
             json.dump(snapshot, f, indent=2)
 
 
-def load_image(path):
+def load_image(path:Path):
     image = tf.io.read_file(path)
+    # TODO: channels??
     image = tf.image.decode_image(image, channels=3, expand_animations=False)
     return tf.image.convert_image_dtype(image, tf.float32)
-
 
 # random crop + downsampling
 def make_lr_hr_pair(image):
@@ -173,10 +173,20 @@ def augment(  # noqa: PLR0913
     jpeg_qrange=(30, 95),  # noqa: ARG001
 ):
     # ---=== flip + rotation ===---
-    lr = tf.image.random_flip_left_right(lr)
-    hr = tf.image.random_flip_left_right(hr)
-    lr = tf.image.random_flip_up_down(lr)
-    hr = tf.image.random_flip_up_down(hr)
+    do_lr_flip = tf.tf.random.uniform([], 0.0, 1.0) < 0.5
+    lr, hr = tf.cond(
+        do_lr_flip,
+        lambda: (tf.image.random_flip_left_right(lr), tf.image.random_flip_left_right(hr)),
+        lambda: (lr, hr),
+    )
+    
+    do_ud_flip = tf.tf.random.uniform([], 0.0, 1.0) < 0.5
+    lr, hr = tf.cond(
+        do_ud_flip,
+        lambda: (tf.image.random_flip_up_down(lr), tf.image.random_flip_up_down(hr)),
+        lambda: (lr, hr),
+    )
+    
     k = tf.random.uniform([], 0, 4, dtype=tf.int32)
     lr = tf.image.rot90(lr, k)
     hr = tf.image.rot90(hr, k)
@@ -339,7 +349,9 @@ def compile_and_train(train_ds, log_root=LOG_ROOT, val_ds=None):
             save_best_only=True,
             monitor="val_loss" if val_ds else "loss",
         ),
+        # TODO: try without reduce?
         tf.keras.callbacks.ReduceLROnPlateau(monitor="val_loss" if val_ds else "loss", factor=0.5, patience=6),
+        # TODO: try with larger patience
         tf.keras.callbacks.EarlyStopping(
             monitor="val_loss" if val_ds else "loss",
             patience=12,
