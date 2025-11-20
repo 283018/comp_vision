@@ -31,7 +31,7 @@ LOG_ROOT.mkdir(exist_ok=True)
 # some scary training logger
 # TODO: add sample eval per epoch
 class TrainingMonitor(tf.keras.callbacks.Callback):
-    def __init__(self, log_root=LOG_ROOT, save_freq_epochs=5, max_samples=3, sample_ds=None):
+    def __init__(self, log_root=LOG_ROOT, save_freq_epochs=5, max_samples=3, sample_ds=None,):
         super().__init__()
         self.sample_ds = sample_ds
         self.log_root = Path(log_root)
@@ -82,9 +82,81 @@ class TrainingMonitor(tf.keras.callbacks.Callback):
             json.dump(snapshot, f, indent=2)
 
 
-def load_image(path:Path):
+class SnapshotOnPlateau(tf.keras.callbacks.Callback):
+    def __init__(
+        self,
+        monitor="val_loss",
+        patience=12,
+        save_dir=LOG_ROOT,
+        verbose=1,
+    ):
+        super().__init__()
+        self.monitor = monitor
+        self.patience = int(patience)
+        self.save_dir = Path(save_dir)
+        self.save_dir.mkdir(parents=True, exist_ok=True)
+        self.verbose = int(verbose)
+
+        if "acc" in self.monitor or "accuracy" in self.monitor or "psnr" in self.monitor or "ssim" in self.monitor:
+            self.monitor_op = lambda a, b: a > b
+            self.best = -float("inf")
+        else:
+            self.monitor_op = lambda a, b: a < b
+            self.best = float("inf")
+
+        self.wait = 0
+        self.best_weights = None
+    
+    def on_train_begin(self, logs=None):  # noqa: ARG002
+        self.wait = 0
+        self.best_weights = None
+
+    def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
+        current = logs.get(self.monitor)
+        if current is None:
+            return
+
+        try:
+            current_val = float(current)
+        except Exception:  # noqa: BLE001
+            return
+
+
+        if self.monitor_op(current_val, self.best):
+            self.best = current_val
+            try:
+                self.best_weights = self.model.get_weights()
+            except Exception:  # noqa: BLE001
+                self.best_weights = None
+            self.wait = 0
+        else:
+            self.wait += 1
+            if self.wait >= self.patience:
+                ts = datetime.now(pytz.timezone("Poland")).isoformat(timespec="seconds")
+                safe_metric = self.monitor.replace("/", "_")
+                fname = f"snapshot_epoch{epoch+1}_{safe_metric}_{current_val:.6f}_{ts}"
+                try:
+                    target = str(self.save_dir / (fname + ".keras"))
+                    print(f"\n[SnapshotOnPlateau] No improvement for {self.patience} epochs. Saving model to {target}")
+                    self.model.save(target)
+                    
+                # double except nesting lets goooo
+                except Exception as e:  # noqa: BLE001
+                    wtarget = str(self.save_dir / (fname + ".h5"))
+                    print(f"\n[SnapshotOnPlateau] Save failed ({e}). Falling back to weights only save at {wtarget}")
+                    try:
+                        self.model.save_weights(wtarget)
+                    except Exception as e2:  # noqa: BLE001
+                        print(f"[SnapshotOnPlateau] Fallback save also failed: {e2}")
+
+                self.wait = 0
+                self.best = current_val
+
+
+
+def load_image(path: Path):
     image = tf.io.read_file(path)
-    # TODO: channels??
     image = tf.image.decode_image(image, channels=3, expand_animations=False)
     return tf.image.convert_image_dtype(image, tf.float32)
 
@@ -179,14 +251,14 @@ def augment(  # noqa: PLR0913
         lambda: (tf.image.random_flip_left_right(lr), tf.image.random_flip_left_right(hr)),
         lambda: (lr, hr),
     )
-    
+
     do_ud_flip = tf.tf.random.uniform([], 0.0, 1.0) < 0.5
     lr, hr = tf.cond(
         do_ud_flip,
         lambda: (tf.image.random_flip_up_down(lr), tf.image.random_flip_up_down(hr)),
         lambda: (lr, hr),
     )
-    
+
     k = tf.random.uniform([], 0, 4, dtype=tf.int32)
     lr = tf.image.rot90(lr, k)
     hr = tf.image.rot90(hr, k)
@@ -221,26 +293,19 @@ def augment(  # noqa: PLR0913
 
 def build_dataset(data_dir: Path, batch_size=BATCH_SIZE, *, training=True):
     data_dir = Path(data_dir)
-    
-    def get_from_dir(d:Path):
-        return [
-            str(p)
-            for p in d.rglob("*")
-            if p.is_file() and not p.name.startswith(".") and p.suffix.lower() in ALLOWED_EXTS
-        ]   # fmt: skip
-    
+
     has_splits = False
     for child in data_dir.iterdir():
         if not child.is_dir():
             continue
-        
+
         names = {p.name.lower() for p in child.iterdir() if p.is_dir()}
         if "train" in names or "test" in names:
             has_splits = True
             break
-    
+
     img_files = []
-    
+
     if has_splits:
         split_name = "train" if training else "test"
         for subset in data_dir.iterdir():
@@ -250,9 +315,7 @@ def build_dataset(data_dir: Path, batch_size=BATCH_SIZE, *, training=True):
             if not split_dir.exists():
                 continue
             # gather files from each subset's train/test folder
-            img_files.extend(
-                str(p) for p in split_dir.rglob("*.*") if p.is_file() and not p.name.startswith(".")
-            )
+            img_files.extend(str(p) for p in split_dir.rglob("*.*") if p.is_file() and not p.name.startswith("."))
     else:
         # fallback
         img_files = [
@@ -307,6 +370,7 @@ def build_unet_upscaler(lr_shape=(LR_PATCH, LR_PATCH, 3), upscale=UPSCALE):
     b = conv_block(p2, 512)
 
     # decoder
+    # TODO: change to PixelShuffle?
     u1 = upsample_block(b, 256)
     u1 = layers.Concatenate()([u1, c3])
     u1 = conv_block(u1, 256)
@@ -340,7 +404,7 @@ def compile_and_train(train_ds, log_root=LOG_ROOT, val_ds=None):
 
     model.compile(
         optimizer=tf.keras.optimizers.Adam(1e-4),
-        loss=tf.keras.losses.MeanAbsoluteError(),   # TODO: change metrics for better psnr?
+        loss=tf.keras.losses.MeanAbsoluteError(),  # TODO: change metrics for better psnr?
         metrics=[psnr_metric, ssim_metric],
     )
     callbacks = [
@@ -351,11 +415,17 @@ def compile_and_train(train_ds, log_root=LOG_ROOT, val_ds=None):
         ),
         # TODO: try without reduce?
         tf.keras.callbacks.ReduceLROnPlateau(monitor="val_loss" if val_ds else "loss", factor=0.5, patience=6),
-        # TODO: try with larger patience
-        tf.keras.callbacks.EarlyStopping(
+        
+        # TODO: snapshot vs early stop
+        # tf.keras.callbacks.EarlyStopping(
+        #     monitor="val_loss" if val_ds else "loss",
+        #     patience=12,
+        #     restore_best_weights=True,
+        # ),
+        SnapshotOnPlateau(
             monitor="val_loss" if val_ds else "loss",
             patience=12,
-            restore_best_weights=True,
+            save_dir=log_root / "plateau_snapshots",
         ),
     ]
 
