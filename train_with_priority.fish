@@ -1,7 +1,14 @@
 #!/usr/bin/env fish
 
+# TODO: enable for changeable input??
+# set -x TF_XLA_FLAGS "--tf_xla_enable_xla_devices=false"
+
 # disable annoying tf warning on import
-set -x TF_CPP_MIN_LOG_LEVEL 1
+set -x TF_CPP_MIN_LOG_LEVEL 3
+set -x GLOG_minloglevel 2
+set -x GLOG_logtostderr 1
+set -x GRPC_VERBOSITY ERROR
+set -x ABSL_MIN_LOG_LEVEL 2
 
 set script $argv[1]
 set rest_args
