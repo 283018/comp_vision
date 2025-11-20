@@ -20,8 +20,9 @@ HR_PATCH = 128
 LR_PATCH = HR_PATCH // UPSCALE
 BATCH_SIZE = 16
 AUTOTUNE = tf.data.AUTOTUNE
-DATA_DIR = Path(USER_HOME_DIR) / Path("fiftyone/open-images-v7/validation/data")
-EPOCHS = 80
+DATA_DIR = Path(USER_HOME_DIR) / Path("image_datum")
+EPOCHS = 120
+ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 
 LOG_ROOT = Path("training_logs")
 LOG_ROOT.mkdir(exist_ok=True)
@@ -111,27 +112,145 @@ def make_lr_hr_pair(image):
     return lr, hr
 
 
-def augment(lr, hr):
-    # random flip + random rotation
-    if tf.random.uniform(()) > 0.5:
-        lr = tf.image.flip_left_right(lr)
-        hr = tf.image.flip_left_right(hr)
-    if tf.random.uniform(()) > 0.5:
-        lr = tf.image.flip_up_down(lr)
-        hr = tf.image.flip_up_down(hr)
-    k = tf.random.uniform((), minval=0, maxval=4, dtype=tf.int32)
+# =======================
+# augmentation functions
+# =======================
+
+
+def _gaussian_kernel(kernel_size: int, sigma: float | tf.Tensor):
+    ax = tf.range(-(kernel_size // 2), (kernel_size // 2) + 1, dtype=tf.float32)
+    xx, yy = tf.meshgrid(ax, ax)
+    kernel = tf.exp(-(xx**2 + yy**2) / (2.0 * sigma**2))
+    kernel = kernel / tf.reduce_sum(kernel)
+    return tf.cast(kernel, tf.float32)
+
+
+def _maybe_blur(lr, prob=0.25):
+    def do_blur():
+        # random kernel + random sigma
+        k = tf.cond(tf.random.uniform([]) < 0.5, lambda: 3, lambda: 5)
+        sigma = tf.random.uniform([], 0.5, 1.5)
+        kernel2d = _gaussian_kernel(k, sigma)
+        c = tf.shape(lr)[-1]
+        kernel4d = tf.reshape(kernel2d, [k, k, 1, 1])
+        kernel4d = tf.tile(kernel4d, [1, 1, c, 1])
+        lr_b = tf.expand_dims(lr, 0)
+        blurred = tf.nn.depthwise_conv2d(lr_b, kernel4d, strides=[1, 1, 1, 1], padding="SAME")
+        return tf.squeeze(blurred, 0)
+
+    return tf.cond(tf.random.uniform([]) < prob, do_blur, lambda: lr)
+
+
+def _maybe_noise(lr, prob=0.5, std=0.01):
+    def do_noise():
+        noise = tf.random.normal(tf.shape(lr), mean=0.0, stddev=std, dtype=tf.float32)
+        return tf.clip_by_value(lr + noise, 0.0, 1.0)
+
+    return tf.cond(tf.random.uniform([]) < prob, do_noise, lambda: lr)
+
+
+def _maybe_jpeg(lr, prob=0.5, q_min=30, q_max=95):
+    def do_jpeg():
+        lr_u8 = tf.image.convert_image_dtype(lr, tf.uint8, saturate=True)
+        quality = tf.random.uniform([], q_min, q_max + 1, dtype=tf.int32)
+        enc = tf.io.encode_jpeg(lr_u8, format="rgb", quality=quality)
+        dec = tf.io.decode_jpeg(enc, channels=3)
+        return tf.image.convert_image_dtype(dec, tf.float32)
+
+    return tf.cond(tf.random.uniform([]) < prob, do_jpeg, lambda: lr)
+
+
+def augment(  # noqa: PLR0913
+    lr,
+    hr,
+    brightness=0.06,
+    contrast_range=(0.9, 1.1),
+    saturation_range=(0.9, 1.1),
+    blur_prob=0.25,
+    noise_prob=0.5,
+    noise_std=0.01,
+    jpeg_prob=0.5,  # noqa: ARG001
+    jpeg_qrange=(30, 95),  # noqa: ARG001
+):
+    # ---=== flip + rotation ===---
+    lr = tf.image.random_flip_left_right(lr)
+    hr = tf.image.random_flip_left_right(hr)
+    lr = tf.image.random_flip_up_down(lr)
+    hr = tf.image.random_flip_up_down(hr)
+    k = tf.random.uniform([], 0, 4, dtype=tf.int32)
     lr = tf.image.rot90(lr, k)
     hr = tf.image.rot90(hr, k)
+
+    # # ---=== jitter - motion simulation ===---
+    if brightness and brightness > 0:
+        b = tf.random.uniform([], -brightness, brightness)
+        lr = tf.image.adjust_brightness(lr, b)
+        hr = tf.image.adjust_brightness(hr, b)
+    c = tf.random.uniform([], contrast_range[0], contrast_range[1])
+    lr = tf.image.adjust_contrast(lr, c)
+    hr = tf.image.adjust_contrast(hr, c)
+    s = tf.random.uniform([], saturation_range[0], saturation_range[1])
+    lr = tf.image.adjust_saturation(lr, s)
+    hr = tf.image.adjust_saturation(hr, s)
+
+    lr = tf.clip_by_value(lr, 0.0, 1.0)
+    hr = tf.clip_by_value(hr, 0.0, 1.0)
+
+    # lr degradation
+    lr = _maybe_blur(lr, prob=blur_prob)
+    lr = _maybe_noise(lr, prob=noise_prob, std=noise_std)
+    # TODO: maybe later
+    # lr = _maybe_jpeg(lr, prob=jpeg_prob, q_min=jpeg_qrange[0], q_max=jpeg_qrange[1])
+
+    # final clamp
+    lr = tf.clip_by_value(lr, 0.0, 1.0)
+    hr = tf.clip_by_value(hr, 0.0, 1.0)
+
     return lr, hr
 
 
 def build_dataset(data_dir: Path, batch_size=BATCH_SIZE, *, training=True):
-    img_files = [
-        str(p)
-        for p in data_dir.rglob("*.*")
-            if p.is_file() and
-            not p.name.startswith(".")
-    ]  # fmt: skip
+    data_dir = Path(data_dir)
+    
+    def get_from_dir(d:Path):
+        return [
+            str(p)
+            for p in d.rglob("*")
+            if p.is_file() and not p.name.startswith(".") and p.suffix.lower() in ALLOWED_EXTS
+        ]   # fmt: skip
+    
+    has_splits = False
+    for child in data_dir.iterdir():
+        if not child.is_dir():
+            continue
+        
+        names = {p.name.lower() for p in child.iterdir() if p.is_dir()}
+        if "train" in names or "test" in names:
+            has_splits = True
+            break
+    
+    img_files = []
+    
+    if has_splits:
+        split_name = "train" if training else "test"
+        for subset in data_dir.iterdir():
+            if not subset.is_dir():
+                continue
+            split_dir = subset / split_name
+            if not split_dir.exists():
+                continue
+            # gather files from each subset's train/test folder
+            img_files.extend(
+                str(p) for p in split_dir.rglob("*.*") if p.is_file() and not p.name.startswith(".")
+            )
+    else:
+        # fallback
+        img_files = [
+            str(p)
+            for p in data_dir.rglob("*.*")
+                if p.is_file() and
+                not p.name.startswith(".")
+        ]  # fmt: skip
 
     if len(img_files) == 0:
         msg = f"No images in {data_dir!r}"
@@ -211,7 +330,7 @@ def compile_and_train(train_ds, log_root=LOG_ROOT, val_ds=None):
 
     model.compile(
         optimizer=tf.keras.optimizers.Adam(1e-4),
-        loss=tf.keras.losses.MeanAbsoluteError(),
+        loss=tf.keras.losses.MeanAbsoluteError(),   # TODO: change metrics for better psnr?
         metrics=[psnr_metric, ssim_metric],
     )
     callbacks = [
@@ -237,9 +356,9 @@ def compile_and_train(train_ds, log_root=LOG_ROOT, val_ds=None):
 
     monitor = TrainingMonitor(log_root=log_root, save_freq_epochs=5, max_samples=3)
     callbacks.append(monitor)
-    
+
     history = model.fit(train_ds, epochs=EPOCHS, validation_data=val_ds, callbacks=callbacks)
-    
+
     (log_root / "history.json").write_text(json.dumps(history.history, indent=2))
 
     df = pd.DataFrame(history.history)
@@ -248,7 +367,7 @@ def compile_and_train(train_ds, log_root=LOG_ROOT, val_ds=None):
     df.to_csv(log_root / "history.csv")
 
     model.save(str(log_root / "final_unet.keras"))
-    
+
     return model, history
 
 
