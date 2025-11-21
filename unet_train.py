@@ -252,7 +252,7 @@ def augment(  # noqa: PLR0913
         lambda: (lr, hr),
     )
 
-    do_ud_flip = tf.tf.random.uniform([], 0.0, 1.0) < 0.5
+    do_ud_flip = tf.random.uniform([], 0.0, 1.0) < 0.5
     lr, hr = tf.cond(
         do_ud_flip,
         lambda: (tf.image.random_flip_up_down(lr), tf.image.random_flip_up_down(hr)),
