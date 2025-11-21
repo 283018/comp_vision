@@ -245,7 +245,7 @@ def augment(  # noqa: PLR0913
     jpeg_qrange=(30, 95),  # noqa: ARG001
 ):
     # ---=== flip + rotation ===---
-    do_lr_flip = tf.tf.random.uniform([], 0.0, 1.0) < 0.5
+    do_lr_flip = tf.random.uniform([], 0.0, 1.0) < 0.5
     lr, hr = tf.cond(
         do_lr_flip,
         lambda: (tf.image.random_flip_left_right(lr), tf.image.random_flip_left_right(hr)),
