@@ -587,11 +587,6 @@ def upscale_image(model, image_path):
 
 
 if __name__ == "__main__":
-    start = datetime.now(pytz.timezone("Poland"))
-    print("\n\n\n")
-    print("Starting at:", start)
-    print("#" * 50 + "\n")
-
     train_ds, n_train = build_dataset(DATA_DIR, batch_size=BATCH_SIZE, patches_per_image=4, training=True)
 
     # should be ok
@@ -602,10 +597,5 @@ if __name__ == "__main__":
     model.save("first_unet_test.keras")
 
     end = datetime.now(pytz.timezone("Poland"))
-    print("\n\n\n")
-    print("\n" + "#" * 50)
-    print("Finished at: ", end)
-    print("Training time: ")
-    print(end - start)
 
     # pass

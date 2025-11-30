@@ -84,6 +84,7 @@ end
 
 sudo -v
 
+#? #TODO: export TF_CUDNN_USE_AUTOTUNE=1 + export TF_DETERMINISTIC_OPS=0
 set cmd "cd '$pydir' && \
     export TF_CPP_MIN_LOG_LEVEL=3 && \
     export GRPC_VERBOSITY=ERROR && \
@@ -98,6 +99,15 @@ elif [ -f '.venv/bin/activate' ]; then . '.venv/bin/activate'; \
 fi && exec python3 \"\$@\""
 
 
+# measuring here less accurate, but overall negligible
+set -l start_hr (date '+%Y-%m-%d %H:%M:%S')
+set -l start_ts (date +%s)
+
+printf "\n\n\n"
+printf "Starting at: %s\n" $start_hr
+printf '%s\n' "##################################################"
+printf "\n"
+
 sudo --preserve-env=$PATH \
     systemd-run --scope \
         --expand-environment=yes \
@@ -106,3 +116,21 @@ sudo --preserve-env=$PATH \
         -p IOWeight=10000 \
         bash -lc "$cmd" -- $pybase $pyargs
 
+set -l py_exit $status
+
+set -l end_hr (date '+%Y-%m-%d %H:%M:%S')
+set -l end_ts (date +%s)
+
+set -l delta (math $end_ts - $start_ts)
+set -l hours (math "floor($delta / 3600)")
+set -l minutes (math "floor(($delta % 3600) / 60)")
+set -l seconds (math "$delta % 60")
+
+printf "\n\n\n"
+printf '\n%s\n' "##################################################"
+printf "Finished at: %s\n" $end_hr
+printf "Training time:\n"
+printf "  %d seconds\n" $delta
+printf "  %02d:%02d:%02d\n" $hours $minutes $seconds
+
+exit $py_exit
