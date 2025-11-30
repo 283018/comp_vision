@@ -1,46 +1,108 @@
 #!/usr/bin/env fish
 
-# TODO: enable for changeable input??
-# set -x TF_XLA_FLAGS "--tf_xla_enable_xla_devices=false"
-
-# disable annoying tf warning on import
-set -x TF_CPP_MIN_LOG_LEVEL 3
-set -x GLOG_minloglevel 2
-set -x GLOG_logtostderr 1
-set -x GRPC_VERBOSITY ERROR
-set -x ABSL_MIN_LOG_LEVEL 2
-
-set script $argv[1]
-set rest_args
-if test (count $argv) -gt 1
-    set rest_args $argv[2..-1]
-end
-
-# idk, should preserve vram at startup
-set -x TF_FORCE_GPU_ALLOW_GROWTH true
+set -l script_name (basename (status --current-filename))
+set nice_level -10
+set xla_enabled 0
 
 if test (id -u) -eq 0
-    set NICE_CMD "nice -n -5"
+    echo "Do not run as root to preserve env vars!"
+    exit 1
+end
+
+set args $argv
+
+if test (count $argv) -eq 0
+    echo "Usage: $script_name [--xla] [--nice N] /path/to/script.py [args...]"
+    echo "    --xla           enable XLA (default: disabled)"
+    echo "    --nice <int>    set nice level (default: -10)"
+    exit 1
+end
+
+while test (count $args) -gt 0
+    switch $args[1]
+        case '--xla'
+            set xla_enabled 1
+            if test (count $args) -gt 1
+                set args $args[2..-1]
+            else
+                set args
+            end
+            continue
+        case '--nice'
+            if test (count $args) -lt 2
+                echo "Missing value for --nice"
+                echo "Usage: $argv[0] [--xla] [--nice N] /path/to/script.py [args...]"
+                exit 1
+            end
+            set -l val $args[2]
+            if not string match -qr '^-?[0-9]+$' -- $val
+                echo "Invalid nice val: $val"
+                exit 1
+            end
+            set nice_level $val
+            if test (count $args) -gt 2
+                set args $args[3..-1]
+            else
+                set args
+            end
+            continue
+        case '--help'
+            echo "Usage: $script_name [--xla] [--nice N] /path/to/script.py [args...]"
+            echo "    --xla           enable XLA (default: disabled)"
+            echo "    --nice <int>    set nice level (default: -10)"
+            exit 1
+        case '--*'
+            echo "Unknown option: $args[1]"
+            echo "Usage: $script_name [--xla] [--nice N] /path/to/script.py [args...]"
+            echo "    --xla           enable XLA (default: disabled)"
+            echo "    --nice <int>    set nice level (default: -10)"
+            exit 1
+        case '*'
+            break
+    end
+end
+
+if test (count $args) -eq 0
+    echo "Usage: $script_name [--xla] [--nice N] /path/to/script.py [args...]"
+    exit 1
+end
+
+set py $args[1]
+set pyargs $args[2..-1]
+
+set pydir (dirname -- $py)
+set pybase (basename -- $py)
+
+if test $xla_enabled -eq 1
+    # set tf_xla_flag '--tf_xla_enable_xla_devices=true'
+    set tf_xla_flag '--tf_xla_auto_jit=2'
 else
-    set NICE_CMD "nice -n 0"
-    printc --yellow "Running as non-root; renice to negative"
+    # set tf_xla_flag '--tf_xla_enable_xla_devices=false'
+    set tf_xla_flag '--tf_xla_auto_jit=0'
 end
 
-set -l inner_cmd "$NICE_CMD ionice -c2 -n0 python3 -u -- '$script' $rest_args"
 
-if type -q systemd-run
-    set unitname "train-"(date +%s)
-    printc --green "Starting: unit: $unitname, CPUWeight=1000 ..."
-    systemd-run --scope -p CPUWeight=1000 -p IOWeight=1000 --unit=$unitname bash -lc "$inner_cmd"
-    exit 0
-end
+sudo -v
 
-# if no systemd-run
-printc --yellow "systemd-run not available - starting directly"
-eval $inner_cmd &
+set cmd "cd '$pydir' && \
+    export TF_CPP_MIN_LOG_LEVEL=3 && \
+    export GRPC_VERBOSITY=ERROR && \
+    export GLOG_minloglevel=2 && \
+    export ABSL_MIN_LOG_LEVEL=2 && \
+    export GLOG_logtostderr=0 && \
+    export TF_XLA_FLAGS='$tf_xla_flag' && \
+    export TF_FORCE_GPU_ALLOW_GROWTH=true && \
+    \
+if [ -f 'venv/bin/activate' ]; then . 'venv/bin/activate'; \
+elif [ -f '.venv/bin/activate' ]; then . '.venv/bin/activate'; \
+fi && exec python3 \"\$@\""
 
-set pid $last_pid
-printc --green "started PID $pid"
 
-set pid (pgrep -f $script)
-renice -n -5 -p pid
+sudo --preserve-env=$PATH \
+    systemd-run --scope \
+        --expand-environment=yes \
+        --nice=$nice_level \
+        -p CPUWeight=10000 \
+        -p IOWeight=10000 \
+        bash -lc "$cmd" -- $pybase $pyargs
+
