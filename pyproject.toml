@@ -25,6 +25,7 @@ dependencies = [
     "scipy>=1.16.3",
     "setuptools>=80.9.0",
     "tensorboard>=2.20.0",
+    "tensorboard-plugin-profile>=2.21.1",
     "types-tensorflow>=2.18.0.20251008",
     "wheel>=0.45.1",
 ]
