@@ -1,15 +1,23 @@
-import io
 import json
+import math
 import os
 from datetime import datetime
 from pathlib import Path
 
+import absl.logging
+
+absl.logging.set_verbosity(absl.logging.ERROR)  # for some reason doesnt work from env???   # nvm, doesnt at all
+
 import keras
+import numpy as np
 import pandas as pd
 import pytz
 import tensorflow as tf
 from dotenv import load_dotenv
-from keras import Model, layers, utils
+from keras import Model, layers, mixed_precision, utils
+from PIL import Image
+
+mixed_precision.set_global_policy("mixed_float16")
 
 load_dotenv(Path("./home.env"))
 USER_HOME_DIR = os.getenv("USER_HOME_DIR") or Path.home()
@@ -18,20 +26,27 @@ USER_HOME_DIR = os.getenv("USER_HOME_DIR") or Path.home()
 UPSCALE = 4
 HR_PATCH = 128
 LR_PATCH = HR_PATCH // UPSCALE
-BATCH_SIZE = 16
+
+BATCH_SIZE = 32  # 16 is safe, but should be ok
 AUTOTUNE = tf.data.AUTOTUNE
-DATA_DIR = Path(USER_HOME_DIR) / Path("image_datum")
+DATA_DIR = Path(USER_HOME_DIR) / Path("image_data")
 EPOCHS = 120
 ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 
 LOG_ROOT = Path("training_logs")
 LOG_ROOT.mkdir(exist_ok=True)
+BAD_FILES_LOG = LOG_ROOT / Path("bar_images.txt")
 
 
 # some scary training logger
-# TODO: add sample eval per epoch
 class TrainingMonitor(tf.keras.callbacks.Callback):
-    def __init__(self, log_root=LOG_ROOT, save_freq_epochs=5, max_samples=3, sample_ds=None,):
+    def __init__(
+        self,
+        log_root=LOG_ROOT,
+        save_freq_epochs=5,
+        max_samples=3,
+        sample_ds=None,
+    ):
         super().__init__()
         self.sample_ds = sample_ds
         self.log_root = Path(log_root)
@@ -106,7 +121,7 @@ class SnapshotOnPlateau(tf.keras.callbacks.Callback):
 
         self.wait = 0
         self.best_weights = None
-    
+
     def on_train_begin(self, logs=None):  # noqa: ARG002
         self.wait = 0
         self.best_weights = None
@@ -122,7 +137,6 @@ class SnapshotOnPlateau(tf.keras.callbacks.Callback):
         except Exception:  # noqa: BLE001
             return
 
-
         if self.monitor_op(current_val, self.best):
             self.best = current_val
             try:
@@ -135,12 +149,12 @@ class SnapshotOnPlateau(tf.keras.callbacks.Callback):
             if self.wait >= self.patience:
                 ts = datetime.now(pytz.timezone("Poland")).isoformat(timespec="seconds")
                 safe_metric = self.monitor.replace("/", "_")
-                fname = f"snapshot_epoch{epoch+1}_{safe_metric}_{current_val:.6f}_{ts}"
+                fname = f"snapshot_epoch{epoch + 1}_{safe_metric}_{current_val:.6f}_{ts}"
                 try:
                     target = str(self.save_dir / (fname + ".keras"))
                     print(f"\n[SnapshotOnPlateau] No improvement for {self.patience} epochs. Saving model to {target}")
                     self.model.save(target)
-                    
+
                 # double except nesting lets goooo
                 except Exception as e:  # noqa: BLE001
                     wtarget = str(self.save_dir / (fname + ".h5"))
@@ -154,11 +168,79 @@ class SnapshotOnPlateau(tf.keras.callbacks.Callback):
                 self.best = current_val
 
 
+class SnapshotOnEpoch(tf.keras.callbacks.Callback):
+    def __init__(
+        self,
+        epochs,
+        save_dir: str | Path = "/model_epoch_snapshots",
+        filename_template="model_epoch_{epoch}.keras",
+        *,
+        overwrite=True,
+    ):
+        super().__init__()
+        self.epochs_to_save = {int(e) for e in epochs}
+        self.save_dir = Path(save_dir)
+        self.save_dir.mkdir(parents=True, exist_ok=True)
+        self.overwrite = bool(overwrite)
+        self.filename_template = filename_template
+
+    def _unique_path(self, path: Path) -> Path:
+        if self.overwrite or not path.exists():
+            return path
+        base = path.stem
+        suf = path.suffix
+        i = 1
+        while True:
+            candidate = path.with_name(f"{base}_{i}{suf}")
+            if not candidate.exists():
+                return candidate
+            i += 1
+
+    def on_epoch_end(self, epoch, logs=None):  # noqa: ARG002
+        current = int(epoch) + 1
+        if current in self.epochs_to_save:
+            fname = self.filename_template.format(epoch=current)
+            target = self.save_dir / fname
+            target = self._unique_path(target)
+
+            try:
+                self.model.save(str(target))
+                tf.get_logger().info(f"Saved snapshot for epoch {current} -> {target}")
+            except Exception as e:  # noqa: BLE001
+                tf.get_logger().error(f"Failed to save model for epoch {current}: {e}")
+
+
+def _py_load_image(path_bytes):
+    path = path_bytes.decode("utf-8")
+    try:
+        with Image.open(path) as img:
+            image = img.convert("RGB")
+            arr = np.array(image, dtype=np.float32) / 255.0
+        ok = True
+    except Exception as e:  # noqa: BLE001
+        arr = np.zeros((HR_PATCH, HR_PATCH, 3), dtype=np.float32)
+        ok = False
+        try:
+            with Path.open(BAD_FILES_LOG, "a") as f:
+                f.write(f"{path}: \n{e!r}")
+        except Exception:  # noqa: BLE001
+            print(f"Error during logging bad image file: {path} \n{e}")
+
+    return arr, ok
+
+
+def safe_load_image(path):
+    img, ok = tf.py_function(_py_load_image, [path], Tout=[tf.float32, tf.bool])
+    img.set_shape([None, None, 3])
+    ok.set_shape([])
+    return img, ok
+
 
 def load_image(path: Path):
     image = tf.io.read_file(path)
     image = tf.image.decode_image(image, channels=3, expand_animations=False)
     return tf.image.convert_image_dtype(image, tf.float32)
+
 
 # random crop + downsampling
 def make_lr_hr_pair(image):
@@ -291,7 +373,15 @@ def augment(  # noqa: PLR0913
     return lr, hr
 
 
-def build_dataset(data_dir: Path, batch_size=BATCH_SIZE, *, training=True):
+def repeat_random_patches(ds_images, patches_per_image=4):
+    return ds_images.flat_map(
+        lambda img: tf.data.Dataset.from_tensors(img)
+        .repeat(patches_per_image)
+        .map(lambda i: make_lr_hr_pair(i), num_parallel_calls=AUTOTUNE),
+    )
+
+
+def build_dataset(data_dir: Path, batch_size=BATCH_SIZE, patches_per_image=1, *, training=True):
     data_dir = Path(data_dir)
 
     has_splits = False
@@ -314,7 +404,7 @@ def build_dataset(data_dir: Path, batch_size=BATCH_SIZE, *, training=True):
             split_dir = subset / split_name
             if not split_dir.exists():
                 continue
-            # gather files from each subset's train/test folder
+            # gather files subdirs for train.test
             img_files.extend(str(p) for p in split_dir.rglob("*.*") if p.is_file() and not p.name.startswith("."))
     else:
         # fallback
@@ -329,15 +419,29 @@ def build_dataset(data_dir: Path, batch_size=BATCH_SIZE, *, training=True):
         msg = f"No images in {data_dir!r}"
         raise ValueError(msg)
 
+    num_images = len(img_files)
+
     ds = tf.data.Dataset.from_tensor_slices(img_files)
     if training:
         ds = ds.shuffle(len(img_files))
     ds = ds.map(lambda p: load_image(p), num_parallel_calls=AUTOTUNE)
-    ds = ds.map(lambda img: make_lr_hr_pair(img), num_parallel_calls=AUTOTUNE)
+
+    ds = ds.ignore_errors(log_warning=True)
+
     if training:
+        ds = repeat_random_patches(ds, patches_per_image=patches_per_image)
         ds = ds.map(lambda lr, hr: augment(lr, hr), num_parallel_calls=AUTOTUNE)
+        total_samples = num_images * patches_per_image
+    else:
+        ds = ds.map(lambda img: make_lr_hr_pair(img), num_parallel_calls=AUTOTUNE)
+        total_samples = num_images
+
+    if training:
+        ds = ds.repeat()
+
     ds = ds.batch(batch_size)
-    return ds.prefetch(AUTOTUNE)
+    ds = ds.prefetch(AUTOTUNE)
+    return ds, total_samples
 
 
 # simple u-net
@@ -382,7 +486,8 @@ def build_unet_upscaler(lr_shape=(LR_PATCH, LR_PATCH, 3), upscale=UPSCALE):
     # spatial size = lr x lr
     out = layers.Conv2D(64, 3, padding="same")(u2)
     out = layers.PReLU(shared_axes=[1, 2])(out)
-    out = layers.Conv2D(3, 3, padding="same", activation="sigmoid")(out)
+    out = layers.Conv2D(3, 3, padding="same")(out)
+    out = layers.Activation("sigmoid", dtype="float32")(out)    # explicit activation with casting
 
     # final resize to target
     # TODO: check if needed
@@ -392,18 +497,20 @@ def build_unet_upscaler(lr_shape=(LR_PATCH, LR_PATCH, 3), upscale=UPSCALE):
     return Model(inp, out, name="first_unet")
 
 
-def compile_and_train(train_ds, log_root=LOG_ROOT, val_ds=None):
+def compile_and_train(train_ds, log_root=LOG_ROOT, steps_per_epoch=None, val_ds=None):
     model = build_unet_upscaler()
 
     # metrics wrappers
     def psnr_metric(y_true, y_pred):
-        return tf.image.psnr(y_true, y_pred, max_val=1.0)
+        return tf.image.psnr(tf.cast(y_true, tf.float32), tf.cast(y_pred, tf.float32), max_val=1.0) # cast for mixed float stability
 
     def ssim_metric(y_true, y_pred):
-        return tf.image.ssim(y_true, y_pred, max_val=1.0)
+        return tf.image.ssim(tf.cast(y_true, tf.float32), tf.cast(y_pred, tf.float32), max_val=1.0)
 
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(1e-4),
+        optimizer=mixed_precision.LossScaleOptimizer(
+            tf.keras.optimizers.Adam(1e-4),
+        ),
         loss=tf.keras.losses.MeanAbsoluteError(),  # TODO: change metrics for better psnr?
         metrics=[psnr_metric, ssim_metric],
     )
@@ -415,7 +522,6 @@ def compile_and_train(train_ds, log_root=LOG_ROOT, val_ds=None):
         ),
         # TODO: try without reduce?
         tf.keras.callbacks.ReduceLROnPlateau(monitor="val_loss" if val_ds else "loss", factor=0.5, patience=6),
-        
         # TODO: snapshot vs early stop
         # tf.keras.callbacks.EarlyStopping(
         #     monitor="val_loss" if val_ds else "loss",
@@ -427,6 +533,7 @@ def compile_and_train(train_ds, log_root=LOG_ROOT, val_ds=None):
             patience=12,
             save_dir=log_root / "plateau_snapshots",
         ),
+        SnapshotOnEpoch([20, 30, 80, 90, 100, 110], save_dir=log_root / Path("model_epoch_snapshots")),
     ]
 
     csv_logger = tf.keras.callbacks.CSVLogger(str(log_root / "metrics.csv"), append=True)
@@ -434,12 +541,24 @@ def compile_and_train(train_ds, log_root=LOG_ROOT, val_ds=None):
 
     # TensorBoard
     tb_dir = log_root / "tensorboard"
-    callbacks.append(tf.keras.callbacks.TensorBoard(log_dir=str(tb_dir), histogram_freq=1))
+    callbacks.append(
+        tf.keras.callbacks.TensorBoard(
+            log_dir=str(tb_dir),
+            # profile_batch=(20, 50),     # only for profiling
+            histogram_freq=1,
+        ),
+    )
 
     monitor = TrainingMonitor(log_root=log_root, save_freq_epochs=5, max_samples=3)
     callbacks.append(monitor)
 
-    history = model.fit(train_ds, epochs=EPOCHS, validation_data=val_ds, callbacks=callbacks)
+    history = model.fit(
+        train_ds,
+        epochs=EPOCHS,
+        validation_data=val_ds,
+        callbacks=callbacks,
+        steps_per_epoch=steps_per_epoch,
+    )
 
     (log_root / "history.json").write_text(json.dumps(history.history, indent=2))
 
@@ -468,8 +587,25 @@ def upscale_image(model, image_path):
 
 
 if __name__ == "__main__":
-    train_ds = build_dataset(DATA_DIR, batch_size=BATCH_SIZE, training=True)
-    model, history = compile_and_train(train_ds)
+    start = datetime.now(pytz.timezone("Poland"))
+    print("\n\n\n")
+    print("Starting at:", start)
+    print("#" * 50 + "\n")
+
+    train_ds, n_train = build_dataset(DATA_DIR, batch_size=BATCH_SIZE, patches_per_image=4, training=True)
+
+    # should be ok
+    # if not try assert_cardinality??
+    steps_per_epoch = math.ceil(n_train / BATCH_SIZE)
+
+    model, history = compile_and_train(train_ds, steps_per_epoch=steps_per_epoch)
     model.save("first_unet_test.keras")
+
+    end = datetime.now(pytz.timezone("Poland"))
+    print("\n\n\n")
+    print("\n" + "#" * 50)
+    print("Finished at: ", end)
+    print("Training time: ")
+    print(end - start)
 
     # pass
