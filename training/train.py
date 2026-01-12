@@ -17,7 +17,11 @@ def compile_and_train(train_ds, log_root=cfg.LOG_ROOT, steps_per_epoch=None, val
 
     # metrics wrappers
     def psnr_metric(y_true, y_pred):
-        return tf.image.psnr(tf.cast(y_true, tf.float32), tf.cast(y_pred, tf.float32), max_val=1.0) # cast for mixed float stability
+        return tf.image.psnr(
+            tf.cast(y_true, tf.float32),
+            tf.cast(y_pred, tf.float32),
+            max_val=1.0,
+        )  # cast for mixed float stability
 
     def ssim_metric(y_true, y_pred):
         return tf.image.ssim(tf.cast(y_true, tf.float32), tf.cast(y_pred, tf.float32), max_val=1.0)
@@ -46,9 +50,13 @@ def compile_and_train(train_ds, log_root=cfg.LOG_ROOT, steps_per_epoch=None, val
         SnapshotOnPlateau(
             monitor="val_loss" if val_ds else "loss",
             patience=12,
-            save_dir=log_root / "plateau_snapshots",
+            save_dir_root=log_root,
+            snapshot_dir="plateau_snapshots",
         ),
-        SnapshotOnEpoch([20, 30, 80, 90, 100, 110], save_dir=log_root / Path("model_epoch_snapshots")),
+        SnapshotOnEpoch(
+            [1, 20, 30, 80, 90, 100, 110],
+            save_dir_root=log_root / Path("model_epoch_snapshots"),
+        ),
     ]
 
     csv_logger = tf.keras.callbacks.CSVLogger(str(log_root / "metrics.csv"), append=True)
@@ -64,7 +72,7 @@ def compile_and_train(train_ds, log_root=cfg.LOG_ROOT, steps_per_epoch=None, val
         ),
     )
 
-    monitor = TrainingMonitor(log_root=log_root, save_freq_epochs=5, max_samples=3)
+    monitor = TrainingMonitor(logs_dir=log_root, save_freq_epochs=5, max_samples=3)
     callbacks.append(monitor)
 
     history = model.fit(

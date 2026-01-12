@@ -11,14 +11,14 @@ from config import cfg
 class TrainingMonitor(tf.keras.callbacks.Callback):
     def __init__(
         self,
-        log_root=cfg.LOG_ROOT,
+        logs_dir=cfg.LOG_ROOT,
         save_freq_epochs=5,
         max_samples=3,
         sample_ds=None,
     ):
         super().__init__()
         self.sample_ds = sample_ds
-        self.log_root = Path(log_root)
+        self.log_root = Path(logs_dir) / "training"
         self.save_freq_epochs = save_freq_epochs
         self.max_samples = max_samples
         self.metrics_csv = self.log_root / "metrics.csv"
@@ -71,13 +71,14 @@ class SnapshotOnPlateau(tf.keras.callbacks.Callback):
         self,
         monitor="val_loss",
         patience=12,
-        save_dir=cfg.LOG_ROOT,
+        save_dir_root=cfg.LOG_ROOT,
+        snapshot_dir="plateau_snapshots",
         verbose=1,
     ):
         super().__init__()
         self.monitor = monitor
         self.patience = int(patience)
-        self.save_dir = Path(save_dir)
+        self.save_dir = Path(save_dir_root) / 'training' / snapshot_dir
         self.save_dir.mkdir(parents=True, exist_ok=True)
         self.verbose = int(verbose)
 
@@ -141,14 +142,14 @@ class SnapshotOnEpoch(tf.keras.callbacks.Callback):
     def __init__(
         self,
         epochs,
-        save_dir: str | Path = "/model_epoch_snapshots",
+        save_dir_root: str | Path = f"{cfg.LOG_ROOT}/training/model_epoch_snapshots",
         filename_template="model_epoch_{epoch}.keras",
         *,
         overwrite=True,
     ):
         super().__init__()
         self.epochs_to_save = {int(e) for e in epochs}
-        self.save_dir = Path(save_dir)
+        self.save_dir = Path(save_dir_root)
         self.save_dir.mkdir(parents=True, exist_ok=True)
         self.overwrite = bool(overwrite)
         self.filename_template = filename_template

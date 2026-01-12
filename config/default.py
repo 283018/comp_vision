@@ -22,6 +22,6 @@ class Config:
     EPOCHS = 120
     ALLOWED_EXTS: frozenset[str] = frozenset({".jpg", ".jpeg", ".png", ".webp"})
 
-    LOG_ROOT = PROJECT_ROOT / "training_logs"
+    LOG_ROOT = PROJECT_ROOT / "logs"
     LOG_ROOT.mkdir(exist_ok=True)
     BAD_FILES_LOG = LOG_ROOT / Path("bar_images.txt")
