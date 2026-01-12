@@ -1,8 +1,8 @@
+import math
 from datetime import datetime
 
 import absl.logging
 import keras
-import numpy as np
 import pytz
 import tensorflow as tf
 from keras import mixed_precision
@@ -21,7 +21,7 @@ if __name__ == "__main__":
 
     # should be ok
     # if not try assert_cardinality??
-    steps_per_epoch = np.ceil(n_train / cfg.BATCH_SIZE)
+    steps_per_epoch = math.ceil(n_train / cfg.BATCH_SIZE)
 
     model, history = compile_and_train(train_ds, steps_per_epoch=steps_per_epoch)
     model.save("first_unet_test.keras")
