@@ -16,5 +16,7 @@ wheels/
 
 training_logs/
 eval_logs/
+logs/
+*/logs*
 
 *.keras
