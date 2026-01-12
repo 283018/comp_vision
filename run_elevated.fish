@@ -4,6 +4,11 @@ set -l script_name (basename (status --current-filename))
 set nice_level -10
 set xla_enabled 0
 
+# save original user to later restore ownership
+set original_user (whoami)
+set original_group (id -gn)
+
+
 if test (id -u) -eq 0
     echo "Do not run as root to preserve env vars!"
     exit 1
@@ -70,8 +75,20 @@ end
 set py $args[1]
 set pyargs $args[2..-1]
 
-set pydir (dirname -- $py)
+set py_abs (realpath -- "$py")
+set pydir (dirname -- "$py_abs")
 set pybase (basename -- $py)
+
+function restore_ownership
+    echo "Restoring ownership in: $pydir/"
+    sudo chown -R "$original_user":"$original_group" "$pydir"
+end
+
+set -l interrupted 0
+function handle_sigint --on-signal=INT
+    set interrupted 1
+end
+# trap 'restore_ownership; exit 130' INT
 
 if test $xla_enabled -eq 1
     # set tf_xla_flag '--tf_xla_enable_xla_devices=true'
@@ -117,6 +134,13 @@ sudo --preserve-env=$PATH \
         bash -lc "$cmd" -- $pybase $pyargs
 
 set -l py_exit $status
+
+if test $interrupted -eq 1
+    restore_ownership
+    exit 130
+end
+
+restore_ownership
 
 set -l end_hr (date '+%Y-%m-%d %H:%M:%S')
 set -l end_ts (date +%s)
