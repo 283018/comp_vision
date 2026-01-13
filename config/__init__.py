@@ -1,9 +1,10 @@
 # config/__init__.py
+from .default import CFG_DEFAULT
 
 # for another profile change here
-from .default import Config as _Config
+cfg = CFG_DEFAULT
+# ...
 
-cfg = _Config()
 
 __all__ = [
     "cfg",
