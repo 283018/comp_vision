@@ -2,10 +2,11 @@ import os
 import sys
 import time
 
-import tensorflow as tf
-from keras import Model, layers, mixed_precision, utils
 
-if __name__ == '__main__':
+def test_tf():
+    import tensorflow as tf  # noqa: PLC0415
+    from keras import Model, layers, mixed_precision, utils  # noqa: PLC0415
+    
     print("\nStarted\n")
     
     print("PYTHON", sys.executable)
@@ -34,3 +35,6 @@ if __name__ == '__main__':
 
     print("\n Now sleeping...")
     time.sleep(60)
+
+if __name__ == '__main__':
+    test_tf()
