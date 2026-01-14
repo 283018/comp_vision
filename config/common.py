@@ -5,8 +5,6 @@ from pathlib import Path
 import tensorflow as tf
 from dotenv import load_dotenv
 
-from unet_eval_on_patches import LR_PATCH
-
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 ENV_FILE = PROJECT_ROOT / "home.env"
 load_dotenv(ENV_FILE)
@@ -34,6 +32,6 @@ class Config:
     BAD_FILES_LOG = LOG_ROOT / Path("bar_images.txt")
 
     def __post_init__(self):
-        if LR_PATCH is None:
+        if self.LR_PATCH is None:
             self.LR_PATCH = self.HR_PATCH // self.UPSCALE
         self.LOG_ROOT.mkdir(exist_ok=True)
