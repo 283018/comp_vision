@@ -8,8 +8,6 @@ from .augmentation import augment, make_lr_hr_pair, repeat_random_patches
 
 # TODO: create actual arguments.
 
-# TODO!!: CHECK IF LR/HR synchronous!
-
 
 def build_dataset(
     data_dir: Path = cfg.DATA_DIR,
@@ -80,7 +78,7 @@ def build_dataset(
     return ds, total_samples
 
 
-def load_image(path: Path):
-    image = tf.io.read_file(path)
+def load_image(img_path: Path):
+    image = tf.io.read_file(str(img_path))
     image = tf.image.decode_image(image, channels=3, expand_animations=False)
     return tf.image.convert_image_dtype(image, tf.float32)
