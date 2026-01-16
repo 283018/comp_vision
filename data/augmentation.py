@@ -25,7 +25,6 @@ def _gaussian_kernel(kernel_size: int, sigma: tf.Tensor):
 
 def _maybe_blur(lr, prob, blur_intensity):
     def do_blur():
-        tf.print("BLUR")
         # random kernel + random sigma
         k = tf.cond(tf.random.uniform([]) < 0.5, lambda: 3, lambda: 5)
         sigma = tf.random.uniform([], 0.1, blur_intensity)
@@ -42,7 +41,6 @@ def _maybe_blur(lr, prob, blur_intensity):
 
 def _maybe_noise(lr, prob, std):
     def do_noise():
-        tf.print("NOISE")
         noise = tf.random.normal(tf.shape(lr), mean=0.0, stddev=std, dtype=tf.float32)
         return tf.clip_by_value(lr + noise, 0.0, 1.0)
 
@@ -51,7 +49,6 @@ def _maybe_noise(lr, prob, std):
 
 def _maybe_jpeg(lr, prob, q_min, q_max):
     def do_jpeg():
-        tf.print("JPEG")
         lr_u8 = tf.image.convert_image_dtype(lr, tf.uint8, saturate=True)
         quality = tf.random.uniform([], q_min, q_max + 1, dtype=tf.int32)
         enc = tf.io.encode_jpeg(lr_u8, format="rgb", quality=quality)
@@ -141,7 +138,6 @@ def augment(  # noqa: PLR0913
     lr = tf.clip_by_value(lr, 0.0, 1.0)
     hr = tf.clip_by_value(hr, 0.0, 1.0)
 
-    tf.print("\n")
     return lr, hr
 
 
