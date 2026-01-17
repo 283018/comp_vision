@@ -49,11 +49,8 @@ def _maybe_noise(lr, prob, std):
 
 def _maybe_jpeg(lr, prob, q_min, q_max):
     def do_jpeg():
-        lr_u8 = tf.image.convert_image_dtype(lr, tf.uint8, saturate=True)
         quality = tf.random.uniform([], q_min, q_max + 1, dtype=tf.int32)
-        enc = tf.io.encode_jpeg(lr_u8, format="rgb", quality=int(quality))
-        dec = tf.io.decode_jpeg(enc, channels=3)
-        return tf.image.convert_image_dtype(dec, tf.float32)
+        return tf.image.adjust_jpeg_quality(lr, quality)
 
     return tf.cond(do_decide(prob), do_jpeg, lambda: lr)
 
