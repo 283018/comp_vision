@@ -26,6 +26,7 @@ class Config:
     LR_PATCH: int | None = None
     AUTOTUNE = tf.data.AUTOTUNE
     DATA_DIR = Path(USER_HOME_DIR).resolve() / "image_data"
+    FILEINDEX_PATH: Path | None = None
     ALLOWED_EXTS: frozenset[str] = frozenset({".jpg", ".jpeg", ".png", ".webp"})
 
     LOG_ROOT = PROJECT_ROOT / "logs"
@@ -34,4 +35,6 @@ class Config:
     def __post_init__(self):
         if self.LR_PATCH is None:
             self.LR_PATCH = self.HR_PATCH // self.UPSCALE
+        if self.FILEINDEX_PATH is None:
+            self.FILEINDEX_PATH = self.DATA_DIR / "index.json"
         self.LOG_ROOT.mkdir(exist_ok=True)
