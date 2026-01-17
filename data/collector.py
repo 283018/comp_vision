@@ -24,7 +24,7 @@ def _count_files(index_files, dataset_type: RunMode) -> int:
     return sum(1 for s in index_files.values() if s == f"{dataset_type}")
 
 
-def _ensure_index(  # noqa: PLR0913
+def _ensure_index(  # noqa: PLR0913, PLR0915
     index_path: Path,
     data_dir: Path,
     *,
@@ -46,6 +46,8 @@ def _ensure_index(  # noqa: PLR0913
     current_files = set()
     for p in data_dir.rglob("*"):
         if p.is_file() and not p.name.startswith("."):
+            if p.suffix.lower() not in cfg.ALLOWED_EXTS:
+                continue
             try:
                 rel_path = str(p.relative_to(data_dir))
                 current_files.add(rel_path)
@@ -256,6 +258,6 @@ def build_dataset(  # noqa: PLR0913
 
 
 def load_image(img_path: Path):
-    image = tf.io.read_file(str(img_path))
+    image = tf.io.read_file(img_path)
     image = tf.image.decode_image(image, channels=3, expand_animations=False)
     return tf.image.convert_image_dtype(image, tf.float32)
