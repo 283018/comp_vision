@@ -20,6 +20,34 @@ class RunMode(StrEnum):
     UNUSED = "unused"
 
 
+def _rgb_to_lumi(img):
+    r, g, b = img[..., 0], img[..., 1], img[..., 2]
+    return 0.2989 * r + 0.5870 * g + 0.1140 * b
+
+
+def _mgm(gray):
+    x = tf.expand_dims(tf.expand_dims(gray, 0), -1)
+    sobel = tf.image.sobel_edges(x)
+    dx = sobel[..., 0]
+    dy = sobel[..., 1]
+    mag = tf.sqrt(tf.square(dx) + tf.square(dy))
+    return tf.reduce_mean(mag)
+
+
+def is_mono_patch(
+    hr_patch,
+    var_thresh=5e-4,
+    grad_thresh=0.02,
+):
+    gray = _rgb_to_lumi(hr_patch)
+    var = tf.math.reduce_variance(gray)
+    grad_mean = _mgm(gray)
+
+    is_low_var = var < var_thresh
+    is_low_grad = grad_mean < grad_thresh
+    return tf.logical_and(is_low_var, is_low_grad)
+
+
 def _count_files(index_files, dataset_type: RunMode) -> int:
     return sum(1 for s in index_files.values() if s == f"{dataset_type}")
 
@@ -69,7 +97,7 @@ def _ensure_index(  # noqa: PLR0913, PLR0915
         unused_files = [
             f for f, state in index["files"].items()
             if state == str(RunMode.UNUSED)
-            ] # fmt: skip
+            ]  # fmt: skip
 
         if unused_files:
             random.shuffle(unused_files)
@@ -105,16 +133,16 @@ def _ensure_index(  # noqa: PLR0913, PLR0915
         unused_files = [
             f for f, state in index["files"].items()
             if state == str(RunMode.UNUSED)
-        ] # fmt: skip
+        ]  # fmt: skip
         if unused_files:
             for file in unused_files:
                 index["files"][file] = str(RunMode.TEST)
-    
+
     elif run_mode == RunMode.EVAL:
         unused_files = [
             f for f, state in index["files"].items()
             if state == str(RunMode.UNUSED)
-        ] # fmt: skip
+        ]  # fmt: skip
         if unused_files:
             for file in unused_files:
                 index["files"][file] = str(RunMode.EVAL)
@@ -152,7 +180,6 @@ def image_iterator(  # noqa: PLR0913
     seed: int | None = None,
     regenerate_index: bool = False,
 ) -> Iterator[str]:
-    
     random.seed(seed)
 
     msgs = []
@@ -205,7 +232,6 @@ def build_dataset(  # noqa: PLR0913
     split_ratios: tuple[float, float] | tuple[float, float, float] = (0.8, 0.2),
     regenerate_index: bool = False,
 ) -> tuple[tf.data.Dataset[tuple[tf.Tensor, tf.Tensor]], int]:
-    
     _ensure_index(
         index_path=index_path,
         data_dir=data_dir,
@@ -214,7 +240,7 @@ def build_dataset(  # noqa: PLR0913
         split_ratios=split_ratios,
         regenerate=regenerate_index,
     )
-    
+
     def gen():
         yield from image_iterator(
             data_dir=data_dir,
@@ -243,6 +269,21 @@ def build_dataset(  # noqa: PLR0913
 
     if run_mode == RunMode.TRAIN:
         ds = repeat_random_patches(ds, patches_per_image=patches_per_image)
+
+        # filtering to monotonic patches
+        var_thresh = 5e-4
+        grad_thresh = 0.02
+        keep_mono_prob = 0.00
+
+        def _keep_fn(_lr, hr):
+            mono = is_mono_patch(hr, var_thresh=var_thresh, grad_thresh=grad_thresh)
+            return tf.logical_or(
+                tf.logical_not(mono),
+                tf.random.uniform([], 0.0, 1.0) < keep_mono_prob,
+            )
+
+        ds = ds.filter(_keep_fn) # type: ignore
+
         ds = ds.map(lambda lr, hr: augment(lr, hr), num_parallel_calls=cfg.AUTOTUNE)
         total_samples = total_count * patches_per_image
     else:
