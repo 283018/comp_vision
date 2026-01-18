@@ -3,11 +3,13 @@ from pathlib import Path
 
 import numpy as np
 import tensorflow as tf
+from keras.applications.vgg19 import preprocess_input as vgg_preprocess
 from PIL import Image
+from plotly import graph_objects as go
 
 from config import cfg
 from data.collector import RunMode, image_iterator, load_image
-from models.sr_gan.subs import PixelShuffle, build_generator
+from models.sr_gan.subs import PixelShuffle, build_generator, build_vgg_feature_extractor
 
 
 def crop_center_divisible_by_upscale(img: tf.Tensor, upscale: int) -> tuple[tf.Tensor, tuple[int, int]]:
@@ -105,12 +107,29 @@ def evaluate_on_iterator(  # noqa: PLR0915
     rows = []
     cnt = 0
 
+    vgg = build_vgg_feature_extractor(
+        layer_name="block5_conv4",
+        hr_shape=(cfg.HR_PATCH, cfg.HR_PATCH, 3),
+    )
+
+    # for plotting
+    psnrs = []
+    ssims = []
+    vgg_sr_dists = []
+    vgg_bic_dists = []
+
+    def compute_vgg_feats(img_tensor):
+        x = tf.cast(img_tensor * 255.0, tf.float32)
+        x = vgg_preprocess(x)
+        x = tf.expand_dims(x, axis=0)  # type: ignore
+        return vgg(x)
+
     for p in img_paths_iter:
         if num_images and cnt >= num_images:
             break
         pth = Path(p)
         try:
-            hr = load_image(p)  # tf.Tensor float32 [0,1]
+            hr = load_image(p)
         except Exception as e:  # noqa: BLE001
             print(f"Skipping {pth}: load_image failed: {e}")
             continue
@@ -145,7 +164,7 @@ def evaluate_on_iterator(  # noqa: PLR0915
         # bicubic baseline (for visualization)
         lr_up = tf.image.resize(lr, [cfg.HR_PATCH, cfg.HR_PATCH], method="bicubic")
         # TODO: END fixed sized
-        
+
         # model expects batch dimension
         lr_b = tf.expand_dims(lr, axis=0)
         sr_b = generator(lr_b, training=False)
@@ -167,11 +186,35 @@ def evaluate_on_iterator(  # noqa: PLR0915
         psnr_val = float(tf.image.psnr(tf.clip_by_value(sr, 0.0, 1.0), hr_crop, max_val=1.0).numpy())
         ssim_val = float(tf.image.ssim(tf.clip_by_value(sr, 0.0, 1.0), hr_crop, max_val=1.0).numpy())
 
+        # VGG distance
+        f_real = compute_vgg_feats(hr_crop)
+        f_sr = compute_vgg_feats(sr)
+        f_bic = compute_vgg_feats(lr_up)
+
+        # L2 mean
+        vgg_sr = float(tf.reduce_mean(tf.square(f_real - f_sr)).numpy())
+        vgg_bic = float(tf.reduce_mean(tf.square(f_real - f_bic)).numpy())
+
         # save visualization
         out_name = f"{cnt + 1:04d}_{pth.stem}.png"
         save_grid_bicubic_sr_hr_diff(lr_up_np, sr_np, hr_np, out_dir / out_name)
 
-        rows.append({"sample": pth.name, "psnr": psnr_val, "ssim": ssim_val, "file": out_name})
+        rows.append(
+            {
+                "sample": pth.name,
+                "psnr": psnr_val,
+                "ssim": ssim_val,
+                "vgg_sr": vgg_sr,
+                "vgg_bic": vgg_bic,
+                "file": out_name,
+            },
+        )
+
+        # for plotting
+        psnrs.append(psnr_val)
+        ssims.append(ssim_val)
+        vgg_sr_dists.append(vgg_sr)
+        vgg_bic_dists.append(vgg_bic)
 
         if (cnt + 1) % 10 == 0:
             print(f"Processed {cnt + 1} images")
@@ -179,7 +222,7 @@ def evaluate_on_iterator(  # noqa: PLR0915
         cnt += 1
 
     with Path.open(csv_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["sample", "psnr", "ssim", "file"])
+        writer = csv.DictWriter(f, fieldnames=["sample", "psnr", "ssim", "vgg_sr", "vgg_bic", "file"])
         writer.writeheader()
         for r in rows:
             writer.writerow(r)
@@ -189,12 +232,100 @@ def evaluate_on_iterator(  # noqa: PLR0915
     ssims = [r["ssim"] for r in rows]
     avg_psnr = float(np.mean(psnrs)) if psnrs else float("nan")
     avg_ssim = float(np.mean(ssims)) if ssims else float("nan")
+    avg_vgg_sr = float(np.mean(vgg_sr_dists)) if vgg_sr_dists else float("nan")
+    avg_vgg_bic = float(np.mean(vgg_bic_dists)) if vgg_bic_dists else float("nan")
     with Path.open(out_dir / "summary.txt", "w") as f:
         f.write(f"samples: {len(rows)}\n")
         f.write(f"avg_psnr: {avg_psnr:.4f}\n")
         f.write(f"avg_ssim: {avg_ssim:.6f}\n")
+        f.write(f"avg_vgg_sr: {avg_vgg_sr:.6e}\n")
+        f.write(f"avg_vgg_bic: {avg_vgg_bic:.6e}\n")
 
     print(f"Done. {len(rows)} samples \navg: PSNR={avg_psnr:.4f}, SSIM={avg_ssim:.6f}")
+    print(f"avg VGG L2 (SR): {avg_vgg_sr:.6e}, (Bic): {avg_vgg_bic:.6e}")
+
+    # PSNR + SSIM
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Scatter(
+            y=psnrs,
+            mode="lines+markers",
+            name="PSNR",
+            marker=dict(symbol="circle"),
+        ),
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            y=ssims,
+            mode="lines+markers",
+            name="SSIM",
+            marker=dict(symbol="x"),
+            yaxis="y2",  # optional: separate scale
+        ),
+    )
+
+    fig.update_layout(
+        title="PSNR + SSIM per sample",
+        xaxis_title="sample",
+        yaxis=dict(
+            title="PSNR",
+            showgrid=True,
+            gridcolor="rgba(0,0,0,0.1)",
+        ),
+        yaxis2=dict(
+            title="SSIM",
+            overlaying="y",
+            side="right",
+            showgrid=False,
+            range=[0, 1],  # SSIM range
+        ),
+        legend=dict(x=0.01, y=0.99),
+        width=900,
+        height=400,
+    )
+
+    # fig.write_image(out_dir / "psnr_ssim_per_sample.png")
+    fig.write_html(out_dir / "psnr_ssim_per_sample.html")
+
+
+    # VGG L2
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Scatter(
+            y=vgg_bic_dists,
+            mode="lines+markers",
+            name="VGG L2 (bicubic)",
+            marker=dict(symbol="circle"),
+        ),
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            y=vgg_sr_dists,
+            mode="lines+markers",
+            name="VGG L2 (SR)",
+            marker=dict(symbol="x"),
+        ),
+    )
+
+    fig.update_layout(
+        title="VGG L2 distance",
+        xaxis_title="sample",
+        yaxis_title="VGG L2 distance",
+        yaxis=dict(
+            showgrid=True,
+            gridcolor="rgba(0,0,0,0.1)",
+        ),
+        legend=dict(x=0.01, y=0.99),
+        width=900,
+        height=400,
+    )
+
+    # fig.write_image(out_dir / "vgg_l2_per_sample.png")
+    fig.write_html(out_dir / "vgg_l2_per_sample.html")
 
 
 if __name__ == "__main__":
@@ -213,7 +344,7 @@ if __name__ == "__main__":
     evaluate_on_iterator(
         model,
         img_iter,
-        num_images=50,
+        num_images=200,
         out_dir=Path("logs/eval"),
         upscale=cfg.UPSCALE,
     )
