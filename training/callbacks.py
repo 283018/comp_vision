@@ -30,10 +30,18 @@ class TrainingMonitor(tf.keras.callbacks.Callback):
 
     def on_epoch_end(self, epoch, logs=None):
         logs = logs or {}
+
+        # workaround for new splitted metrics
+        def _get(log_key_variants, default=""):
+            for k in log_key_variants:
+                if k in logs:
+                    return logs.get(k)
+            return default
+
         row = {
             "epoch": epoch + 1,
             "datetime": datetime.now(pytz.timezone("Poland")).isoformat(),
-            "loss": logs.get("loss", ""),
+            "loss": _get(["loss", "g_loss", "generator_loss"], ""),
             "val_loss": logs.get("val_loss", ""),
             "psnr_metric": logs.get("psnr_metric", ""),
             "val_psnr_metric": logs.get("val_psnr_metric", ""),
@@ -78,7 +86,7 @@ class SnapshotOnPlateau(tf.keras.callbacks.Callback):
         super().__init__()
         self.monitor = monitor
         self.patience = int(patience)
-        self.save_dir = Path(save_dir_root) / 'training' / snapshot_dir
+        self.save_dir = Path(save_dir_root) / "training" / snapshot_dir
         self.save_dir.mkdir(parents=True, exist_ok=True)
         self.verbose = int(verbose)
 
@@ -121,10 +129,18 @@ class SnapshotOnPlateau(tf.keras.callbacks.Callback):
                 safe_metric = self.monitor.replace("/", "_")
                 fname = f"snapshot_epoch{epoch + 1}_{safe_metric}_{current_val:.6f}_{ts}"
                 try:
-                    target = str(self.save_dir / (fname + ".keras"))
-                    print(f"\n[SnapshotOnPlateau] No improvement for {self.patience} epochs. Saving model to {target}")
-                    self.model.save(target)
+                    if hasattr(self.model, "generator"):
+                        try:
+                            self.best_weights = self.model.generator.get_weights()
+                        except Exception:  # noqa: BLE001
+                            self.best_weights = None
+                    else:
+                        try:
+                            self.best_weights = self.model.get_weights()
+                        except Exception:  # noqa: BLE001
+                                self.best_weights = None
 
+                # TODO: update fallback
                 # double except nesting lets goooo
                 except Exception as e:  # noqa: BLE001
                     wtarget = str(self.save_dir / (fname + ".h5"))
@@ -174,7 +190,50 @@ class SnapshotOnEpoch(tf.keras.callbacks.Callback):
             target = self._unique_path(target)
 
             try:
-                self.model.save(str(target))
-                tf.get_logger().info(f"Saved snapshot for epoch {current} -> {target}")
+                if hasattr(self.model, "generator"):
+                    gen_target = target.with_name(target.stem + "_generator" + target.suffix)
+                    self.model.generator.save(str(gen_target))
+                    tf.get_logger().info(f"Saved generator snapshot for epoch {current} -> {gen_target}")
+                else:
+                    self.model.save(str(target))
+                    tf.get_logger().info(f"Saved snapshot for epoch {current} -> {target}")
             except Exception as e:  # noqa: BLE001
                 tf.get_logger().error(f"Failed to save model for epoch {current}: {e}")
+
+
+class GeneratorCheckpoint(tf.keras.callbacks.Callback):
+    def __init__(
+        self,
+        monitor="val_psnr_metric",
+        mode="max",
+        save_dir=cfg.LOG_ROOT / "training" / "gen_checkpoints",
+    ):
+        super().__init__()
+        self.monitor = monitor
+        self.save_dir = Path(save_dir)
+        self.save_dir.mkdir(parents=True, exist_ok=True)
+        self.mode = mode
+        self.best = -float("inf") if mode == "max" else float("inf")
+
+    def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
+        val = logs.get(self.monitor)
+        if val is None:
+            return
+        try:
+            val = float(val)
+        except Exception:  # noqa: BLE001
+            return
+
+        improved = val > self.best if self.mode == "max" else val < self.best
+        if improved:
+            self.best = val
+            ts = datetime.now(pytz.timezone("Poland")).isoformat(timespec="seconds")
+            fname = f"generator_epoch{epoch + 1}_{self.monitor}_{val:.6f}_{ts}.keras"
+            target = self.save_dir / fname
+            if hasattr(self.model, "generator"):
+                try:
+                    self.model.generator.save(str(target))
+                    tf.get_logger().info(f"Saved improved generator -> {target}")
+                except Exception as e:  # noqa: BLE001
+                    tf.get_logger().warning(f"Failed to save generator: {e}")
