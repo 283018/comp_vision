@@ -95,7 +95,7 @@ if test $xla_enabled -eq 1
     set tf_xla_flag '--tf_xla_auto_jit=2'
 else
     # set tf_xla_flag '--tf_xla_enable_xla_devices=false'
-    set tf_xla_flag '--tf_xla_auto_jit=0'
+    set tf_xla_flag '--tf_xla_auto_jit=0 --tf_xla_enable_xla_devices=false'
 end
 
 
@@ -131,9 +131,10 @@ sudo --preserve-env=$PATH \
         --nice=$nice_level \
         -p CPUWeight=10000 \
         -p IOWeight=10000 \
-        -p InhibitWhat=sleep:idle \
-        -p InhibitDelayMaxSec=0 \
-        bash -lc "$cmd" -- $pybase $pyargs
+        systemd-inhibit \
+            --what=sleep:idle \
+            --why="GPU training" \
+            bash -lc "$cmd" -- $pybase $pyargs
 
 set -l py_exit $status
 
