@@ -131,6 +131,8 @@ sudo --preserve-env=$PATH \
         --nice=$nice_level \
         -p CPUWeight=10000 \
         -p IOWeight=10000 \
+        -p InhibitWhat=sleep:idle \
+        -p InhibitDelayMaxSec=0 \
         bash -lc "$cmd" -- $pybase $pyargs
 
 set -l py_exit $status
