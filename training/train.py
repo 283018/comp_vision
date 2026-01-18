@@ -8,12 +8,24 @@ import tensorflow as tf
 from keras import mixed_precision
 
 from config import cfg
-from models import build_unet_upscaler
-from training import SnapshotOnEpoch, SnapshotOnPlateau, TrainingMonitor
+from models import SRGAN, build_discriminator, build_generator, build_vgg_feature_extractor
+from training import GeneratorCheckpoint, SnapshotOnEpoch, SnapshotOnPlateau, TrainingMonitor
 
 
 def compile_and_train(train_ds, log_root=cfg.LOG_ROOT, steps_per_epoch=None, val_ds=None):
-    model = build_unet_upscaler()
+    gen = build_generator(lr_shape=(cfg.LR_PATCH, cfg.LR_PATCH, 3), upscale=cfg.UPSCALE)
+    disc = build_discriminator(hr_shape=(cfg.HR_PATCH, cfg.HR_PATCH, 3))
+    vgg = build_vgg_feature_extractor(layer_name="block5_conv4", hr_shape=(cfg.HR_PATCH, cfg.HR_PATCH, 3))
+
+    # g_opt = mixed_precision.LossScaleOptimizer(tf.keras.optimizers.Adam(1e-4))
+    # d_opt = mixed_precision.LossScaleOptimizer(tf.keras.optimizers.Adam(1e-4))
+    
+    g_opt = tf.keras.optimizers.Adam(1e-4)
+    d_opt = tf.keras.optimizers.Adam(1e-4)
+
+    bce = tf.keras.losses.BinaryCrossentropy(from_logits=False)
+    mse = tf.keras.losses.MeanSquaredError()
+    mae = tf.keras.losses.MeanAbsoluteError()
 
     # metrics wrappers
     def psnr_metric(y_true, y_pred):
@@ -21,40 +33,52 @@ def compile_and_train(train_ds, log_root=cfg.LOG_ROOT, steps_per_epoch=None, val
             tf.cast(y_true, tf.float32),
             tf.cast(y_pred, tf.float32),
             max_val=1.0,
-        )  # cast for mixed float stability
+        )
 
     def ssim_metric(y_true, y_pred):
         return tf.image.ssim(tf.cast(y_true, tf.float32), tf.cast(y_pred, tf.float32), max_val=1.0)
 
-    model.compile(
-        optimizer=mixed_precision.LossScaleOptimizer(
-            tf.keras.optimizers.Adam(1e-4),
-        ),
-        loss=tf.keras.losses.MeanAbsoluteError(),  # TODO: change metrics for better psnr?
+    srgan = SRGAN(
+        gen,
+        disc,
+        vgg,
+    )
+
+    srgan.compile(
+        g_optimizer=g_opt,
+        d_optimizer=d_opt,
+        content_loss_fn=mse,
+        adv_loss_fn=bce,
+        pixel_loss_fn=mae,
+    )
+
+    pretrain_epochs = 1
+    gen.compile(
+        optimizer=g_opt,
+        loss=mae,
         metrics=[psnr_metric, ssim_metric],
     )
+    gen.fit(
+        train_ds,
+        steps_per_epoch=steps_per_epoch,
+        epochs=pretrain_epochs,
+        validation_data=val_ds,
+        callbacks=[],
+    )
+
     callbacks = [
-        tf.keras.callbacks.ModelCheckpoint(
-            "unet_best.keras",
-            save_best_only=True,
-            monitor="val_loss" if val_ds else "loss",
+        GeneratorCheckpoint(
+            monitor="val_psnr_metric",
+            mode="max",
         ),
-        # TODO: try without reduce?
-        tf.keras.callbacks.ReduceLROnPlateau(monitor="val_loss" if val_ds else "loss", factor=0.5, patience=6),
-        # TODO: snapshot vs early stop
-        # tf.keras.callbacks.EarlyStopping(
-        #     monitor="val_loss" if val_ds else "loss",
-        #     patience=12,
-        #     restore_best_weights=True,
-        # ),
-        SnapshotOnPlateau(
-            monitor="val_loss" if val_ds else "loss",
-            patience=12,
-            save_dir_root=log_root,
-            snapshot_dir="plateau_snapshots",
+        tf.keras.callbacks.ReduceLROnPlateau(
+            monitor="val_psnr_metric",
+            mode="max",
+            factor=0.5,
+            patience=6,
         ),
         SnapshotOnEpoch(
-            [1, 20, 30, 80, 90, 100, 110],
+            [1, 5, 7, 10, 13, 15, 17, 18, 20, 23, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 38, 40],
             save_dir_root=log_root / Path("model_epoch_snapshots"),
         ),
     ]
@@ -75,12 +99,12 @@ def compile_and_train(train_ds, log_root=cfg.LOG_ROOT, steps_per_epoch=None, val
     monitor = TrainingMonitor(logs_dir=log_root, save_freq_epochs=5, max_samples=3)
     callbacks.append(monitor)
 
-    history = model.fit(
+    history = srgan.fit(
         train_ds,
         epochs=cfg.EPOCHS,
+        steps_per_epoch=steps_per_epoch,
         validation_data=val_ds,
         callbacks=callbacks,
-        steps_per_epoch=steps_per_epoch,
     )
 
     (log_root / "history.json").write_text(json.dumps(history.history, indent=2))
@@ -90,6 +114,7 @@ def compile_and_train(train_ds, log_root=cfg.LOG_ROOT, steps_per_epoch=None, val
     df.index.name = "epoch"
     df.to_csv(log_root / "history.csv")
 
-    model.save(str(log_root / "final_unet.keras"))
+    gen.save(str(log_root / "generator_final.keras"))
+    disc.save(str(log_root / "discriminator_final.keras"))
 
-    return model, history
+    return srgan, history

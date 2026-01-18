@@ -12,7 +12,10 @@ from data import RunMode, build_dataset
 from training import compile_and_train
 
 absl.logging.set_verbosity(absl.logging.ERROR)
-mixed_precision.set_global_policy("mixed_float16")
+tf.config.optimizer.set_jit(False)
+
+# disabled for simplicity in custom model
+# mixed_precision.set_global_policy("mixed_float16")
 
 
 if __name__ == "__main__":
@@ -29,7 +32,7 @@ if __name__ == "__main__":
     steps_per_epoch = math.ceil(n_train / cfg.BATCH_SIZE)
 
     model, history = compile_and_train(train_ds, steps_per_epoch=steps_per_epoch)
-    model.save("first_unet_test.keras")
+    model.save("first_srgan_test.keras")
 
     end = datetime.now(pytz.timezone("Poland"))
 
