@@ -45,7 +45,7 @@ def build_unet_upscaler(lr_shape=(cfg.LR_PATCH, cfg.LR_PATCH, 3), upscale=cfg.UP
     out = layers.Conv2D(64, 3, padding="same")(u2)
     out = layers.PReLU(shared_axes=[1, 2])(out)
     out = layers.Conv2D(3, 3, padding="same")(out)
-    out = layers.Activation("sigmoid", dtype="float32")(out)    # explicit activation with casting
+    out = layers.Activation("sigmoid", dtype="float32")(out)  # explicit activation with casting
 
     # final resize to target
     if upscale > 1:

@@ -140,7 +140,7 @@ class SnapshotOnPlateau(tf.keras.callbacks.Callback):
                         try:
                             self.best_weights = self.model.get_weights()
                         except Exception:  # noqa: BLE001
-                                self.best_weights = None
+                            self.best_weights = None
 
                 # double except nesting lets goooo
                 except Exception as e:  # noqa: BLE001
@@ -172,7 +172,7 @@ class SnapshotOnEpoch(tf.keras.callbacks.Callback):
         self.save_dir.mkdir(parents=True, exist_ok=True)
         self.overwrite = bool(overwrite)
         self.filename_template = filename_template
-        
+
         self.ckpt = ckpt
         self.ckpt_manager = ckpt_manager
 
@@ -184,9 +184,9 @@ class SnapshotOnEpoch(tf.keras.callbacks.Callback):
                 discriminator=self.model.discriminator,
                 g_optimizer=self.model.g_optimizer,
                 d_optimizer=self.model.d_optimizer,
-                epoch=tf.Variable(0, trainable=False, dtype=tf.int64), # type: ignore
+                epoch=tf.Variable(0, trainable=False, dtype=tf.int64),  # type: ignore
             )
-    
+
     def _unique_path(self, path: Path) -> Path:
         if self.overwrite or not path.exists():
             return path
@@ -217,7 +217,7 @@ class SnapshotOnEpoch(tf.keras.callbacks.Callback):
                             self.ckpt.epoch.assign(current)
 
                         if self.ckpt_manager is not None:
-                            save_path = self.ckpt_manager.save() # type: ignore
+                            save_path = self.ckpt_manager.save()  # type: ignore
                             tf.get_logger().info(f"Saved full training checkpoint (managed) -> {save_path}")
                         else:
                             ckpt_dir = target.with_name(target.stem + "_ckpt")
@@ -232,6 +232,7 @@ class SnapshotOnEpoch(tf.keras.callbacks.Callback):
                     tf.get_logger().info(f"Saved snapshot for epoch {current} -> {target}")
             except Exception as e:  # noqa: BLE001
                 tf.get_logger().error(f"Failed to save model for epoch {current}: {e}")
+
 
 class GeneratorCheckpoint(tf.keras.callbacks.Callback):
     def __init__(

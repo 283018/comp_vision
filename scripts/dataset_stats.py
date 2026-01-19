@@ -54,7 +54,10 @@ def analyze_directory(directory):
 def main():  # noqa: PLR0915
     parser = argparse.ArgumentParser(description="Get image dataset stats")
     parser.add_argument(
-        "root_dir", nargs="?", default=".", help="Root dir with datasets",
+        "root_dir",
+        nargs="?",
+        default=".",
+        help="Root dir with datasets",
     )
     args = parser.parse_args()
 

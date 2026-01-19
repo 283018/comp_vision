@@ -95,10 +95,10 @@ def test_iterator_consistency():
 
         with Path.open(index_path) as f:
             index = json.load(f)
-        
+
         indexed_rel_paths = set(index["files"].keys())
         assert indexed_rel_paths - full_rel_set == set(), "index contains files not in dataset"  # noqa: S101
-        
+
         unused_files = [f for f, s in index["files"].items() if s == str(RunMode.UNUSED)]
         assert len(unused_files) == 0, f"unused files remain: {len(unused_files)}"  # noqa: S101
 
@@ -106,13 +106,13 @@ def test_iterator_consistency():
         train_ratio = len(train_rel_set) / total_assigned
         test_ratio = len(test_rel_set_first) / total_assigned
         eval_ratio = len(eval_rel_set_first) / total_assigned
-        
+
         assert 0.65 <= train_ratio <= 0.75, f"train ratio {train_ratio:.2f} outside range"  # noqa: S101
         assert 0.15 <= test_ratio <= 0.25, f"test ratio {test_ratio:.2f} outside range"  # noqa: S101
         assert 0.05 <= eval_ratio <= 0.15, f"eval ratio {eval_ratio:.2f} outside range"  # noqa: S101
-        
+
     print("\nAll tests passed")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_iterator_consistency()

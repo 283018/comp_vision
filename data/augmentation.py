@@ -8,12 +8,12 @@ from config import cfg
 def do_decide(prob: float = 0.5) -> tf.Tensor:
     """
     Decides whether to return `True` or `False`, depending on whether random number is less than provided.
-    
+
     :param prob: prob threshold.
     :return: tensor with `True` or `False`.
     """
     return tf.random.uniform([], 0.0, 1.0) < prob
-    
+
 
 def _gaussian_kernel(kernel_size: int, sigma: tf.Tensor):
     ax = tf.range(-(kernel_size // 2), (kernel_size // 2) + 1, dtype=tf.float32)
@@ -61,16 +61,16 @@ def augment(  # noqa: PLR0913
     *,
     lr_flip_prob: float = 0.5,
     ud_flip_prob: float = 0.5,
-    rot90_prob:float = 0.75,
-    brightness:float = 0.1,
-    contrast_range:tuple[float, float] = (0.7, 1.3),
-    saturation_range:tuple[float, float] = (0.7, 1.3),
-    blur_prob:float = 0.4,
-    blur_intensity:float = 0.4,
-    noise_prob:float = 0.4,
-    noise_std:float=0.03,
-    jpeg_prob:float=0.0,
-    jpeg_qrange:tuple[int, int] = (30, 95),  # noqa: ARG001
+    rot90_prob: float = 0.75,
+    brightness: float = 0.1,
+    contrast_range: tuple[float, float] = (0.7, 1.3),
+    saturation_range: tuple[float, float] = (0.7, 1.3),
+    blur_prob: float = 0.4,
+    blur_intensity: float = 0.4,
+    noise_prob: float = 0.4,
+    noise_std: float = 0.03,
+    jpeg_prob: float = 0.0,
+    jpeg_qrange: tuple[int, int] = (30, 95),  # noqa: ARG001
 ) -> tuple[tf.Tensor, tf.Tensor]:
     """
     :param lr: low-res image.
@@ -87,7 +87,7 @@ def augment(  # noqa: PLR0913
     :param noise_std: std of **noise**.
     :param jpeg_prob: prob of applying jpeg compression to pair. Disabled by default.
     :param jpeg_qrange: range of values for jpeg compression quality. Disabled by default.
-    
+
     :return: tuple containing augmented low-res and high-res images as tensors.
     """
     # ---=== flip + rotation ===---
@@ -128,7 +128,7 @@ def augment(  # noqa: PLR0913
     # lr degradation
     lr = _maybe_blur(lr, prob=blur_prob, blur_intensity=blur_intensity)
     lr = _maybe_noise(lr, prob=noise_prob, std=noise_std)
-    #* disabled by default
+    # * disabled by default
     lr = _maybe_jpeg(lr, prob=jpeg_prob, q_min=jpeg_qrange[0], q_max=jpeg_qrange[1])
 
     # final clamp

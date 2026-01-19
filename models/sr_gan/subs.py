@@ -9,6 +9,7 @@ from keras.saving import register_keras_serializable
 def maybe_bn_layer(use_bn: bool):  # noqa: FBT001
     return layers.BatchNormalization(dtype=tf.float32) if use_bn else layers.Lambda(lambda x: x)
 
+
 #!: current PixelShuffle cannot be serialized, so must be preserved on runtime
 @register_keras_serializable(package="custom_layers")
 class PixelShuffle(layers.Layer):
@@ -23,6 +24,7 @@ class PixelShuffle(layers.Layer):
         cfg = super().get_config()
         cfg.update({"scale": self.scale})
         return cfg
+
 
 def residual_block(x_in, filters, kernel_size=3, *, use_batchnorm=True):
     bn = maybe_bn_layer(use_batchnorm)
@@ -39,6 +41,7 @@ def upsample_pixelshuffle(x_in, filters, scale=2):
     x = PixelShuffle(scale=scale)(x)
     return layers.PReLU(shared_axes=[1, 2])(x)
 
+
 def build_generator(lr_shape=(32, 32, 3), num_res_blocks=12, upscale=4, *, use_batchnorm=True):
     inp = layers.Input(shape=lr_shape)
     x = layers.Conv2D(64, 9, padding="same")(inp)
@@ -49,8 +52,10 @@ def build_generator(lr_shape=(32, 32, 3), num_res_blocks=12, upscale=4, *, use_b
         x = residual_block(x, 64, use_batchnorm=use_batchnorm)
 
     x = layers.Conv2D(64, 3, padding="same")(x)
+
+    # in theory can decrease quality, but help training stability (more important?)
+    x = maybe_bn_layer(use_batchnorm)(x)
     
-    x = maybe_bn_layer(use_batchnorm)(x)  # in theory can decrease quality, but help training stability (more important?)
     x = layers.Add()([x, skip])
 
     # upsampling
@@ -72,12 +77,12 @@ def disc_block(x, filters, kernel_size=3, strides=1, *, batchnorm=True):
 
 
 # full image discriminator, instead of per-patch, may reduce local texture quality
-def build_discriminator(hr_shape=(128, 128, 3), *, use_full_batchnorm:bool=True):
+def build_discriminator(hr_shape=(128, 128, 3), *, use_full_batchnorm: bool = True):
     inp = layers.Input(shape=hr_shape)
     x = layers.Conv2D(64, 3, strides=1, padding="same")(inp)
-    x = layers.LeakyReLU(0.2)(x)    # smoother training + used in most implementations
+    x = layers.LeakyReLU(0.2)(x)  # smoother training + used in most implementations
 
-    x = disc_block(x, 64, strides=2, batchnorm=False)   # should stabilize training
+    x = disc_block(x, 64, strides=2, batchnorm=False)  # should stabilize training
     x = disc_block(x, 128, strides=1, batchnorm=use_full_batchnorm)
     x = disc_block(x, 128, strides=2, batchnorm=use_full_batchnorm)
     x = disc_block(x, 256, strides=1, batchnorm=use_full_batchnorm)

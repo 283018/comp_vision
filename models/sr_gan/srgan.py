@@ -101,7 +101,7 @@ class SRGAN(Model):
             scaled_g_loss = self.g_optimizer.get_scaled_loss(g_loss)
             grads_g = tape_g.gradient(scaled_g_loss, self.generator.trainable_variables)
             grads_g = self.g_optimizer.get_unscaled_gradients(grads_g)
-            
+
             # TODO: check if needed
             # grads_g, _ = tf.clip_by_global_norm(grads_g, 5.0)
 

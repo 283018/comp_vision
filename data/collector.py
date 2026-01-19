@@ -282,7 +282,7 @@ def build_dataset(  # noqa: PLR0913
                 tf.random.uniform([], 0.0, 1.0) < keep_mono_prob,
             )
 
-        ds = ds.filter(_keep_fn) # type: ignore
+        ds = ds.filter(_keep_fn)  # type: ignore
 
         ds = ds.map(lambda lr, hr: augment(lr, hr), num_parallel_calls=cfg.AUTOTUNE)
         total_samples = total_count * patches_per_image
