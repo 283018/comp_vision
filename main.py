@@ -12,7 +12,7 @@ from data import RunMode, build_dataset
 from training import compile_and_train
 
 absl.logging.set_verbosity(absl.logging.ERROR)
-tf.config.optimizer.set_jit(False)
+# tf.config.optimizer.set_jit(False)
 
 mixed_precision.set_global_policy("mixed_float16")
 
