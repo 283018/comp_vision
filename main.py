@@ -35,6 +35,7 @@ if __name__ == "__main__":
         train_ds,
         steps_per_epoch=steps_per_epoch,
         make_snapshots_on=epochs_to_save,
+        pretrain_epochs=5,
     )
     model.save("first_srgan_test.keras")
 

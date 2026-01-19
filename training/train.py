@@ -18,6 +18,7 @@ def compile_and_train(  # noqa: PLR0913
     log_root=cfg.LOG_ROOT,
     steps_per_epoch=None,
     val_ds=None,
+    pretrain_epochs:int=1,
     *,
     try_resume=False,
     make_snapshots_on:list | None,
@@ -55,15 +56,15 @@ def compile_and_train(  # noqa: PLR0913
         disc,
         vgg,
         content_weight=1.0,
-        adversarial_weight=1e-3,
-        pixel_weight=5.0,   # TODO: increase even more if artifacts stays
+        adversarial_weight=1e-2,
+        pixel_weight=1.5,   # TODO: increase even more if artifacts stays
         tv_weight=1e-6,
     )
 
     srgan.compile(
         g_optimizer=g_opt,
         d_optimizer=d_opt,
-        content_loss_fn=mse,
+        content_loss_fn=mse,    # TODO?: try mae, should help with blur
         adv_loss_fn=bce,
         pixel_loss_fn=mae,
     )
@@ -99,7 +100,6 @@ def compile_and_train(  # noqa: PLR0913
                 f"Restored checkpoint from {latest}; resuming from epoch {start_epoch}",
             )
 
-    pretrain_epochs = 1
     gen.compile(
         optimizer=g_opt,
         loss=mae,
