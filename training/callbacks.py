@@ -1,9 +1,11 @@
+import contextlib
 import json
 from datetime import datetime
 from pathlib import Path
 
 import pytz
 import tensorflow as tf
+from tensorflow.train import Checkpoint, CheckpointManager
 
 from config import cfg
 
@@ -140,7 +142,6 @@ class SnapshotOnPlateau(tf.keras.callbacks.Callback):
                         except Exception:  # noqa: BLE001
                                 self.best_weights = None
 
-                # TODO: update fallback
                 # double except nesting lets goooo
                 except Exception as e:  # noqa: BLE001
                     wtarget = str(self.save_dir / (fname + ".h5"))
@@ -155,13 +156,15 @@ class SnapshotOnPlateau(tf.keras.callbacks.Callback):
 
 
 class SnapshotOnEpoch(tf.keras.callbacks.Callback):
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         epochs,
         save_dir_root: str | Path = f"{cfg.LOG_ROOT}/training/model_epoch_snapshots",
         filename_template="model_epoch_{epoch}.keras",
         *,
         overwrite=True,
+        ckpt: Checkpoint | None = None,
+        ckpt_manager: CheckpointManager | None = None,
     ):
         super().__init__()
         self.epochs_to_save = {int(e) for e in epochs}
@@ -169,7 +172,21 @@ class SnapshotOnEpoch(tf.keras.callbacks.Callback):
         self.save_dir.mkdir(parents=True, exist_ok=True)
         self.overwrite = bool(overwrite)
         self.filename_template = filename_template
+        
+        self.ckpt = ckpt
+        self.ckpt_manager = ckpt_manager
 
+    # messed something up here
+    def ____on_train_begin(self, logs=None):  # noqa: ARG002
+        if hasattr(self.model, "generator"):
+            self.ckpt = Checkpoint(
+                generator=self.model.generator,
+                discriminator=self.model.discriminator,
+                g_optimizer=self.model.g_optimizer,
+                d_optimizer=self.model.d_optimizer,
+                epoch=tf.Variable(0, trainable=False, dtype=tf.int64), # type: ignore
+            )
+    
     def _unique_path(self, path: Path) -> Path:
         if self.overwrite or not path.exists():
             return path
@@ -194,12 +211,27 @@ class SnapshotOnEpoch(tf.keras.callbacks.Callback):
                     gen_target = target.with_name(target.stem + "_generator" + target.suffix)
                     self.model.generator.save(str(gen_target))
                     tf.get_logger().info(f"Saved generator snapshot for epoch {current} -> {gen_target}")
+
+                    if self.ckpt is not None:
+                        with contextlib.suppress(Exception):
+                            self.ckpt.epoch.assign(current)
+
+                        if self.ckpt_manager is not None:
+                            save_path = self.ckpt_manager.save() # type: ignore
+                            tf.get_logger().info(f"Saved full training checkpoint (managed) -> {save_path}")
+                        else:
+                            ckpt_dir = target.with_name(target.stem + "_ckpt")
+                            ckpt_dir.mkdir(parents=True, exist_ok=True)
+                            # this save returns a path with numeric suffix
+                            path = self.ckpt.save(str(ckpt_dir / "ckpt"))
+                            tf.get_logger().info(f"Saved full training checkpoint -> {path}")
+                    else:
+                        tf.get_logger().warning("Checkpoint object not initialized; skipping full checkpoint save.")
                 else:
                     self.model.save(str(target))
                     tf.get_logger().info(f"Saved snapshot for epoch {current} -> {target}")
             except Exception as e:  # noqa: BLE001
                 tf.get_logger().error(f"Failed to save model for epoch {current}: {e}")
-
 
 class GeneratorCheckpoint(tf.keras.callbacks.Callback):
     def __init__(
