@@ -314,7 +314,6 @@ def eval_on_testset(  # noqa: PLR0913, PLR0915
 
                         # skip on border
                         if (y_hr + HR_PATCH > hr_h) or (x_hr + HR_PATCH > hr_w):
-                            # TODO: print
                             # print(
                             #     f"[skip-border] skipping border tile for file={p} at LR (y={y},x={x}) -> "
                             #     f"HR (y_hr={y_hr},x_hr={x_hr}) would exceed HR size ({hr_h},{hr_w})",
@@ -323,7 +322,6 @@ def eval_on_testset(  # noqa: PLR0913, PLR0915
 
                         patch = lr_padded[y : y + LR_PATCH, x : x + LR_PATCH, :].numpy().astype(np.float32)
                         if patch.shape != (LR_PATCH, LR_PATCH, 3):
-                            # TODO: print
                             # print(f"[skip] skipping tile for file={p} at (y={y},x={x}) with shape={patch.shape}")
                             continue
 
@@ -422,7 +420,6 @@ def eval_on_testset(  # noqa: PLR0913, PLR0915
         unique_shapes = {}
         for s in [t.shape for t in normalized_tiles]:
             unique_shapes[s] = unique_shapes.get(s, 0) + 1
-        # TODO: print
         # print(f"[debug] prepared tiles: count={tiles_arr.shape[0]}, tile_shape={tiles_arr.shape[1:]}, unique_shapes={unique_shapes}")
 
 
@@ -470,7 +467,6 @@ def eval_on_testset(  # noqa: PLR0913, PLR0915
             psnr_b, ssim_b, mae_b = compute_metrics_pair(hr_patch, bic_patch)
             psnr_m, ssim_m, mae_m = compute_metrics_pair(hr_patch, pred_patch)
 
-            # TODO: print
             # if math.isinf(psnr_b):
             #     print(f"[warning] bicubic PSNR is +inf for file={info['path']} at (y_hr={y_hr},x_hr={x_hr})")
             # if math.isinf(psnr_m):
