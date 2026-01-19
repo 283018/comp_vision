@@ -22,7 +22,7 @@ class Config:
 
     BATCH_SIZE: int
     EPOCHS: int
-    
+
     LR_PATCH: int | None = None
     AUTOTUNE = tf.data.AUTOTUNE
     DATA_DIR = Path(USER_HOME_DIR).resolve() / "image_data"

@@ -6,4 +6,3 @@ CFG_DEFAULT = Config(
     BATCH_SIZE=32,  # 16 is safe but should be ok
     EPOCHS=120,
 )
-

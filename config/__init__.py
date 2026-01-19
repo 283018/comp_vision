@@ -9,4 +9,3 @@ cfg = CFG_DEFAULT
 __all__ = [
     "cfg",
 ]
-
