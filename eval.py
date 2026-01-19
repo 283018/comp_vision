@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+import argparse
 import csv
 from pathlib import Path
 
@@ -10,6 +12,34 @@ from plotly import graph_objects as go
 from config import cfg
 from data.collector import RunMode, image_iterator, load_image
 from models.sr_gan.subs import PixelShuffle, build_generator, build_vgg_feature_extractor
+
+# ########################
+# eval patch sie + number
+# ########################
+
+MAX_LR_EVAL = 320
+NUM_IMG = 20
+SNAPSHOT_NUM = 30
+
+# ########################
+
+
+def crop_center_max_square_divisible_by_upscale(img: tf.Tensor, upscale: int, max_lr_eval: int) -> tf.Tensor:
+    shape = tf.shape(img)
+    h = tf.cast(shape[0], tf.int32)
+    w = tf.cast(shape[1], tf.int32)
+
+    size = tf.minimum(h, w)
+
+    size_div = (size // upscale) * upscale
+    size_div = tf.maximum(size_div, upscale)
+    max_hr = max_lr_eval * upscale
+    size_div = tf.minimum(size_div, max_hr)
+
+    off_y = (h - size_div) // 2
+    off_x = (w - size_div) // 2
+
+    return tf.image.crop_to_bounding_box(img, off_y, off_x, size_div, size_div)
 
 
 def crop_center_divisible_by_upscale(img: tf.Tensor, upscale: int) -> tuple[tf.Tensor, tuple[int, int]]:
@@ -93,12 +123,13 @@ def save_grid_bicubic_sr_hr_diff(lr_up_np: np.ndarray, sr_np: np.ndarray, hr_np:
     canvas.save(str(out_path), format="PNG")
 
 
-def evaluate_on_iterator(  # noqa: PLR0915
+def evaluate_on_iterator(  # noqa: PLR0913, PLR0915
     generator: tf.keras.Model,
     img_paths_iter,
     num_images: int,
     out_dir: Path,
     upscale: int,
+    max_lr_eval: int,
 ):
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -137,33 +168,23 @@ def evaluate_on_iterator(  # noqa: PLR0915
         # ensure float32 0..1
         hr = tf.image.convert_image_dtype(hr, tf.float32)
 
-        # TODO: START full size update
-        # crop center to divisible dims
-        # hr_crop, (off_y, off_x) = crop_center_divisible_by_upscale(hr, upscale)
+        hr_crop = crop_center_max_square_divisible_by_upscale(hr, upscale, max_lr_eval)
 
-        # if crop is smaller than upscale (rare), pad instead
-        # sh = tf.shape(hr_crop)
-        # if sh[0] < upscale or sh[1] < upscale:
-        #     # pad to upscale using reflect
-        #     pad_h = int(upscale - int(sh[0].numpy())) if int(sh[0].numpy()) < upscale else 0
-        #     pad_w = int(upscale - int(sh[1].numpy())) if int(sh[1].numpy()) < upscale else 0
-        #     pad_top = pad_h // 2
-        #     pad_bottom = pad_h - pad_top
-        #     pad_left = pad_w // 2
-        #     pad_right = pad_w - pad_left
-        #     hr_crop = tf.pad(hr_crop, [[pad_top, pad_bottom], [pad_left, pad_right], [0, 0]], mode="REFLECT")
+        # if hr_crop ended up smaller than upscale (very small images), pad to at least upscale
+        sh = tf.shape(hr_crop)
+        pad_h = tf.maximum(0, upscale - sh[0])
+        pad_w = tf.maximum(0, upscale - sh[1])
+        if pad_h > 0 or pad_w > 0:
+            pad_top = pad_h // 2
+            pad_bottom = pad_h - pad_top
+            pad_left = pad_w // 2
+            pad_right = pad_w - pad_left
+            hr_crop = tf.pad(hr_crop, [[pad_top, pad_bottom], [pad_left, pad_right], [0, 0]], mode="REFLECT")  # type: ignore
 
-        # lr = make_lr_from_hr(hr_crop, upscale)
-
-        lr, hr_crop = make_lr_hr_pair_eval_fixed(hr)
-
-        lr_b = tf.expand_dims(lr, axis=0)
-        sr_b = generator(lr_b, training=False)
-        sr = tf.squeeze(sr_b, axis=0)
-
-        # bicubic baseline (for visualization)
-        lr_up = tf.image.resize(lr, [cfg.HR_PATCH, cfg.HR_PATCH], method="bicubic")
-        # TODO: END fixed sized
+        # produce LR patch corresponding to cropped HR
+        lr_h = tf.shape(hr_crop)[0] // upscale
+        lr_w = tf.shape(hr_crop)[1] // upscale
+        lr = tf.image.resize(hr_crop, [lr_h, lr_w], method="bicubic", antialias=True)
 
         # model expects batch dimension
         lr_b = tf.expand_dims(lr, axis=0)
@@ -187,9 +208,13 @@ def evaluate_on_iterator(  # noqa: PLR0915
         ssim_val = float(tf.image.ssim(tf.clip_by_value(sr, 0.0, 1.0), hr_crop, max_val=1.0).numpy())
 
         # VGG distance
-        f_real = compute_vgg_feats(hr_crop)
-        f_sr = compute_vgg_feats(sr)
-        f_bic = compute_vgg_feats(lr_up)
+        hr_vgg = tf.image.resize(hr_crop, [cfg.HR_PATCH, cfg.HR_PATCH], method="bicubic")
+        sr_vgg = tf.image.resize(sr, [cfg.HR_PATCH, cfg.HR_PATCH], method="bicubic")
+        bic_vgg = tf.image.resize(lr_up, [cfg.HR_PATCH, cfg.HR_PATCH], method="bicubic")
+
+        f_real = compute_vgg_feats(hr_vgg)
+        f_sr = compute_vgg_feats(sr_vgg)
+        f_bic = compute_vgg_feats(bic_vgg)
 
         # L2 mean
         vgg_sr = float(tf.reduce_mean(tf.square(f_real - f_sr)).numpy())
@@ -289,7 +314,6 @@ def evaluate_on_iterator(  # noqa: PLR0915
     # fig.write_image(out_dir / "psnr_ssim_per_sample.png")
     fig.write_html(out_dir / "psnr_ssim_per_sample.html")
 
-
     # VGG L2
     fig = go.Figure()
 
@@ -328,9 +352,13 @@ def evaluate_on_iterator(  # noqa: PLR0915
     fig.write_html(out_dir / "vgg_l2_per_sample.html")
 
 
-if __name__ == "__main__":
+def main(
+    main_snapshot_num: int,
+    main_num_images: int,
+    main_max_lr_eval: int,
+):
     model = tf.keras.models.load_model(
-        "logs/model_epoch_snapshots/model_epoch_20_generator.keras",
+        f"logs/model_epoch_snapshots/model_epoch_{main_snapshot_num}_generator.keras",
         custom_objects={"PixelShuffle": PixelShuffle},
         compile=False,
     )
@@ -344,7 +372,22 @@ if __name__ == "__main__":
     evaluate_on_iterator(
         model,
         img_iter,
-        num_images=200,
+        num_images=main_num_images,
         out_dir=Path("logs/eval"),
         upscale=cfg.UPSCALE,
+        max_lr_eval=main_max_lr_eval,
+    )
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-v", type=int, default=SNAPSHOT_NUM)
+    parser.add_argument("-n", type=int, default=NUM_IMG)
+    parser.add_argument("-s", type=int, default=MAX_LR_EVAL)
+    args = parser.parse_args()
+    
+    main(
+        main_snapshot_num=args.v,
+        main_num_images=args.n,
+        main_max_lr_eval=args.s,
     )
