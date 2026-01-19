@@ -17,6 +17,7 @@ tf.config.optimizer.set_jit(False)
 # disabled for simplicity in custom model
 # mixed_precision.set_global_policy("mixed_float16")
 
+epochs_to_save = [1, 5, 7, 10, 13, 15, 17, 18, 20, 23, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 38, 40, 42, 45, 53, 55, 57, 60, 63, 65, 67, 70, 73, 75]  # fmt: skip
 
 if __name__ == "__main__":
     train_ds, n_train = build_dataset(
@@ -31,7 +32,11 @@ if __name__ == "__main__":
     # if not try assert_cardinality??
     steps_per_epoch = math.ceil(n_train / cfg.BATCH_SIZE)
 
-    model, history = compile_and_train(train_ds, steps_per_epoch=steps_per_epoch)
+    model, history = compile_and_train(
+        train_ds,
+        steps_per_epoch=steps_per_epoch,
+        make_snapshots_on=epochs_to_save,
+    )
     model.save("first_srgan_test.keras")
 
     end = datetime.now(pytz.timezone("Poland"))

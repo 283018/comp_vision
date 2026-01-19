@@ -13,16 +13,18 @@ from models import SRGAN, build_discriminator, build_generator, build_vgg_featur
 from training import GeneratorCheckpoint, SnapshotOnEpoch, SnapshotOnPlateau, TrainingMonitor
 
 
-def compile_and_train(
+def compile_and_train(  # noqa: PLR0913
     train_ds,
     log_root=cfg.LOG_ROOT,
     steps_per_epoch=None,
     val_ds=None,
     *,
     try_resume=False,
+    make_snapshots_on:list | None,
 ):
     # gen = build_generator(lr_shape=(cfg.LR_PATCH, cfg.LR_PATCH, 3), upscale=cfg.UPSCALE)
-    gen = build_generator(lr_shape=(None, None, 3), upscale=cfg.UPSCALE)
+    # TODO!: try less res_layers (make training faster with little difference on effects??)
+    gen = build_generator(lr_shape=(None, None, 3), upscale=cfg.UPSCALE,)
 
     disc = build_discriminator(hr_shape=(cfg.HR_PATCH, cfg.HR_PATCH, 3))
     vgg = build_vgg_feature_extractor(layer_name="block5_conv4", hr_shape=(cfg.HR_PATCH, cfg.HR_PATCH, 3))
@@ -48,14 +50,13 @@ def compile_and_train(
     def ssim_metric(y_true, y_pred):
         return tf.image.ssim(tf.cast(y_true, tf.float32), tf.cast(y_pred, tf.float32), max_val=1.0)
 
-    # TODO: try to tune here
     srgan = SRGAN(
         gen,
         disc,
         vgg,
         content_weight=1.0,
         adversarial_weight=1e-3,
-        pixel_weight=5.0,
+        pixel_weight=5.0,   # TODO: increase even more if artifacts stays
         tv_weight=1e-6,
     )
 
@@ -113,6 +114,9 @@ def compile_and_train(
             callbacks=[],
         )
 
+    if make_snapshots_on is None:
+            msg = "Epochs for checkpoints and snapshots are not provided!"
+            raise ValueError(msg)
     callbacks = [
         GeneratorCheckpoint(
             monitor="val_psnr_metric",
@@ -125,7 +129,7 @@ def compile_and_train(
             patience=6,
         ),
         SnapshotOnEpoch(
-            [1, 5, 7, 10, 13, 15, 17, 18, 20, 23, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 38, 40],
+            epochs = make_snapshots_on,
             save_dir_root=log_root / Path("model_epoch_snapshots"),
             ckpt=ckpt,
             ckpt_manager=ckpt_manager,
