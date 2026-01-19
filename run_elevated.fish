@@ -82,6 +82,7 @@ set pybase (basename -- $py)
 function restore_ownership
     echo "Restoring ownership in: $pydir/"
     sudo chown -R "$original_user":"$original_group" "$pydir"
+    sudo chown -R "$original_user":"$original_group" "/home/""$original_user""/image_data"
 end
 
 set -l interrupted 0
