@@ -29,11 +29,11 @@ def compile_and_train(  # noqa: PLR0913
     disc = build_discriminator(hr_shape=(cfg.HR_PATCH, cfg.HR_PATCH, 3))
     vgg = build_vgg_feature_extractor(layer_name="block5_conv4", hr_shape=(cfg.HR_PATCH, cfg.HR_PATCH, 3))
 
-    # g_opt = mixed_precision.LossScaleOptimizer(tf.keras.optimizers.Adam(1e-4))
-    # d_opt = mixed_precision.LossScaleOptimizer(tf.keras.optimizers.Adam(1e-4))
+    g_opt = mixed_precision.LossScaleOptimizer(tf.keras.optimizers.Adam(1e-4))
+    d_opt = mixed_precision.LossScaleOptimizer(tf.keras.optimizers.Adam(1e-4))
 
-    g_opt = tf.keras.optimizers.Adam(1e-4)
-    d_opt = tf.keras.optimizers.Adam(1e-4)
+    # g_opt = tf.keras.optimizers.Adam(1e-4)
+    # d_opt = tf.keras.optimizers.Adam(1e-4)
 
     bce = tf.keras.losses.BinaryCrossentropy(from_logits=False)
     mse = tf.keras.losses.MeanSquaredError()

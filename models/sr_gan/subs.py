@@ -7,7 +7,7 @@ from keras.saving import register_keras_serializable
 
 #! TODO: use something else instead of skip?
 def maybe_bn_layer(use_bn: bool):  # noqa: FBT001
-    return layers.BatchNormalization() if use_bn else layers.Lambda(lambda x: x)
+    return layers.BatchNormalization(dtype=tf.float32) if use_bn else layers.Lambda(lambda x: x)
 
 #!: current PixelShuffle cannot be serialized, so must be preserved on runtime
 @register_keras_serializable(package="custom_layers")
@@ -59,7 +59,7 @@ def build_generator(lr_shape=(32, 32, 3), num_res_blocks=12, upscale=4, *, use_b
         x = upsample_pixelshuffle(x, 64, scale=2)
 
     x = layers.Conv2D(3, 9, padding="same")(x)
-    out = layers.Activation("sigmoid", dtype="float32")(x)
+    out = layers.Activation("sigmoid", dtype=tf.float32)(x)
     return Model(inp, out, name="generator_resnet")
 
 
@@ -67,7 +67,7 @@ def build_generator(lr_shape=(32, 32, 3), num_res_blocks=12, upscale=4, *, use_b
 def disc_block(x, filters, kernel_size=3, strides=1, *, batchnorm=True):
     x = layers.Conv2D(filters, kernel_size, strides=strides, padding="same")(x)
     if batchnorm:
-        x = layers.BatchNormalization()(x)
+        x = layers.BatchNormalization(dtype=tf.float32)(x)
     return layers.LeakyReLU(0.2)(x)
 
 
@@ -86,9 +86,9 @@ def build_discriminator(hr_shape=(128, 128, 3), *, use_full_batchnorm:bool=True)
     x = disc_block(x, 512, strides=2, batchnorm=use_full_batchnorm)
 
     x = layers.Flatten()(x)
-    x = layers.Dense(1024)(x)
+    x = layers.Dense(1024, dtype=tf.float32)(x)
     x = layers.LeakyReLU(0.2)(x)
-    out = layers.Dense(1, activation="sigmoid")(x)
+    out = layers.Dense(1, activation="sigmoid", dtype=tf.float32)(x)
     return Model(inp, out, name="discriminator")
 
 
@@ -97,4 +97,4 @@ def build_vgg_feature_extractor(layer_name="block5_conv4", hr_shape=(128, 128, 3
     vgg = VGG19(include_top=False, weights="imagenet", input_shape=hr_shape)
     vgg.trainable = False
     outputs = vgg.get_layer(layer_name).output
-    return Model(vgg.input, outputs)
+    return Model(vgg.input, outputs, dtype=tf.float32)
