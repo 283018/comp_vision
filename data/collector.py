@@ -273,7 +273,7 @@ def build_dataset(  # noqa: PLR0913
         # filtering to monotonic patches
         var_thresh = 5e-4
         grad_thresh = 0.02
-        keep_mono_prob = 0.00
+        keep_mono_prob = 0.1
 
         def _keep_fn(_lr, hr):
             mono = is_mono_patch(hr, var_thresh=var_thresh, grad_thresh=grad_thresh)
