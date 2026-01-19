@@ -13,6 +13,7 @@ class SRGAN(Model):
         content_weight=1.0,
         adversarial_weight=1e-3,
         pixel_weight=1.0,
+        tv_weight = 0.,
     ):
         super().__init__()
         self.generator = generator
@@ -21,6 +22,7 @@ class SRGAN(Model):
         self.content_weight = content_weight
         self.adversarial_weight = adversarial_weight
         self.pixel_weight = pixel_weight
+        self.tv_weight = tv_weight
 
         # metrics
         self.g_loss_tracker = tf.keras.metrics.Mean(name="loss")
@@ -73,15 +75,24 @@ class SRGAN(Model):
             # perceptual loss with VGG
             vgg_fake = self.compute_vgg_features(fake_hr)
             vgg_real = self.compute_vgg_features(hr)
-            content_loss = self.content_loss_fn(vgg_real, vgg_fake)
+            vgg_loss = self.content_loss_fn(vgg_real, vgg_fake)
 
             adv_loss = self.adv_loss_fn(real_labels, d_fake_for_g)
 
             pixel_loss = self.pixel_loss_fn(hr, fake_hr)
-
+            
+            tv_loss = (
+                tf.reduce_mean(tf.image.total_variation(fake_hr))
+                if self.tv_weight and self.tv_weight > 0.0
+                else 0.0
+                )   # fmt: skip
+            
             g_loss = (
-                self.content_weight * content_loss + self.adversarial_weight * adv_loss + self.pixel_weight * pixel_loss
-            )
+                self.content_weight * vgg_loss
+                + self.adversarial_weight * adv_loss
+                + self.pixel_weight * pixel_loss
+                + self.tv_weight * tv_loss
+            )   # fmt: skip
 
         grads_g = tape_g.gradient(g_loss, self.generator.trainable_variables)
         self.g_optimizer.apply_gradients(zip(grads_g, self.generator.trainable_variables, strict=True))
@@ -120,14 +131,21 @@ class SRGAN(Model):
         # content/pixel/adversarial for generator evaluation
         vgg_fake = self.compute_vgg_features(fake_hr)
         vgg_real = self.compute_vgg_features(hr)
-        content_loss = self.content_loss_fn(vgg_real, vgg_fake)
+        vgg_loss = self.content_loss_fn(vgg_real, vgg_fake)
         adv_loss_for_g = self.adv_loss_fn(real_labels, d_fake)
         pixel_loss = self.pixel_loss_fn(hr, fake_hr)
 
+        tv_loss = (
+                tf.reduce_mean(tf.image.total_variation(fake_hr))
+                if self.tv_weight and self.tv_weight > 0.0
+                else 0.0
+                )   # fmt: skip
+        
         g_loss = (
-            self.content_weight * content_loss
+            self.content_weight * vgg_loss
             + self.adversarial_weight * adv_loss_for_g
             + self.pixel_weight * pixel_loss
+            + self.tv_weight * tv_loss
         )
 
         # update metrics

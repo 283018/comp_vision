@@ -48,10 +48,15 @@ def compile_and_train(
     def ssim_metric(y_true, y_pred):
         return tf.image.ssim(tf.cast(y_true, tf.float32), tf.cast(y_pred, tf.float32), max_val=1.0)
 
+    # TODO: try to tune here
     srgan = SRGAN(
         gen,
         disc,
         vgg,
+        content_weight=1.0,
+        adversarial_weight=1e-3,
+        pixel_weight=5.0,
+        tv_weight=1e-6,
     )
 
     srgan.compile(
