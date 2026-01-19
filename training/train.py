@@ -18,14 +18,17 @@ def compile_and_train(  # noqa: PLR0913
     log_root=cfg.LOG_ROOT,
     steps_per_epoch=None,
     val_ds=None,
-    pretrain_epochs:int=1,
+    pretrain_epochs: int = 1,
     *,
     try_resume=False,
-    make_snapshots_on:list | None,
+    make_snapshots_on: list | None,
 ):
     # gen = build_generator(lr_shape=(cfg.LR_PATCH, cfg.LR_PATCH, 3), upscale=cfg.UPSCALE)
     # TODO!: try less res_layers (make training faster with little difference on effects??)
-    gen = build_generator(lr_shape=(None, None, 3), upscale=cfg.UPSCALE,)
+    gen = build_generator(
+        lr_shape=(None, None, 3),
+        upscale=cfg.UPSCALE,
+    )
 
     disc = build_discriminator(hr_shape=(cfg.HR_PATCH, cfg.HR_PATCH, 3))
     vgg = build_vgg_feature_extractor(layer_name="block5_conv4", hr_shape=(cfg.HR_PATCH, cfg.HR_PATCH, 3))
@@ -57,14 +60,14 @@ def compile_and_train(  # noqa: PLR0913
         vgg,
         content_weight=1.0,
         adversarial_weight=1e-2,
-        pixel_weight=1.5,   # TODO: increase even more if artifacts stays
+        pixel_weight=1.5,  # TODO: increase even more if artifacts stays
         tv_weight=1e-6,
     )
 
     srgan.compile(
         g_optimizer=g_opt,
         d_optimizer=d_opt,
-        content_loss_fn=mse,    # TODO?: try mae, should help with blur
+        content_loss_fn=mse,  # TODO?: try mae, should help with blur
         adv_loss_fn=bce,
         pixel_loss_fn=mae,
     )
@@ -77,7 +80,7 @@ def compile_and_train(  # noqa: PLR0913
         discriminator=disc,
         g_optimizer=g_opt,
         d_optimizer=d_opt,
-        epoch=tf.Variable(0, trainable=False, dtype=tf.int64), # type: ignore
+        epoch=tf.Variable(0, trainable=False, dtype=tf.int64),  # type: ignore
     )
 
     ckpt_manager = CheckpointManager(
@@ -89,10 +92,10 @@ def compile_and_train(  # noqa: PLR0913
     # building dummy models for restoration
     _ = gen(tf.zeros([1, cfg.LR_PATCH, cfg.LR_PATCH, 3]))
     _ = disc(tf.zeros([1, cfg.HR_PATCH, cfg.HR_PATCH, 3]))
-    
+
     start_epoch = 0
     if try_resume:
-        latest = ckpt_manager.latest_checkpoint # type: ignore
+        latest = ckpt_manager.latest_checkpoint  # type: ignore
         if latest:
             ckpt.restore(latest).expect_partial()
             start_epoch = int(ckpt.epoch.numpy())
@@ -115,8 +118,8 @@ def compile_and_train(  # noqa: PLR0913
         )
 
     if make_snapshots_on is None:
-            msg = "Epochs for checkpoints and snapshots are not provided!"
-            raise ValueError(msg)
+        msg = "Epochs for checkpoints and snapshots are not provided!"
+        raise ValueError(msg)
     callbacks = [
         GeneratorCheckpoint(
             monitor="val_psnr_metric",
@@ -129,7 +132,7 @@ def compile_and_train(  # noqa: PLR0913
             patience=6,
         ),
         SnapshotOnEpoch(
-            epochs = make_snapshots_on,
+            epochs=make_snapshots_on,
             save_dir_root=log_root / Path("model_epoch_snapshots"),
             ckpt=ckpt,
             ckpt_manager=ckpt_manager,
