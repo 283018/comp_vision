@@ -5,10 +5,11 @@ from keras.applications import VGG19
 from keras.saving import register_keras_serializable
 
 
+#! TODO: use something else instead of skip?
 def maybe_bn_layer(use_bn: bool):  # noqa: FBT001
     return layers.BatchNormalization() if use_bn else layers.Lambda(lambda x: x)
 
-# TODO!: current PixelShuffle cannot be serialized, so must be preserved on runtime
+#!: current PixelShuffle cannot be serialized, so must be preserved on runtime
 @register_keras_serializable(package="custom_layers")
 class PixelShuffle(layers.Layer):
     def __init__(self, scale, **kwargs):
@@ -38,7 +39,6 @@ def upsample_pixelshuffle(x_in, filters, scale=2):
     x = PixelShuffle(scale=scale)(x)
     return layers.PReLU(shared_axes=[1, 2])(x)
 
-
 def build_generator(lr_shape=(32, 32, 3), num_res_blocks=12, upscale=4, *, use_batchnorm=True):
     inp = layers.Input(shape=lr_shape)
     x = layers.Conv2D(64, 9, padding="same")(inp)
@@ -46,11 +46,10 @@ def build_generator(lr_shape=(32, 32, 3), num_res_blocks=12, upscale=4, *, use_b
     skip = x
 
     for _ in range(num_res_blocks):
-        x = residual_block(x, 64)
+        x = residual_block(x, 64, use_batchnorm=use_batchnorm)
 
     x = layers.Conv2D(64, 3, padding="same")(x)
     
-    # TODO?: try tanh?
     x = maybe_bn_layer(use_batchnorm)(x)  # in theory can decrease quality, but help training stability (more important?)
     x = layers.Add()([x, skip])
 
