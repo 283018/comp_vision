@@ -13,8 +13,17 @@ from models import SRGAN, build_discriminator, build_generator, build_vgg_featur
 from training import GeneratorCheckpoint, SnapshotOnEpoch, SnapshotOnPlateau, TrainingMonitor
 
 
-def compile_and_train(train_ds, log_root=cfg.LOG_ROOT, steps_per_epoch=None, val_ds=None):
-    gen = build_generator(lr_shape=(cfg.LR_PATCH, cfg.LR_PATCH, 3), upscale=cfg.UPSCALE)
+def compile_and_train(
+    train_ds,
+    log_root=cfg.LOG_ROOT,
+    steps_per_epoch=None,
+    val_ds=None,
+    *,
+    try_resume=False,
+):
+    # gen = build_generator(lr_shape=(cfg.LR_PATCH, cfg.LR_PATCH, 3), upscale=cfg.UPSCALE)
+    gen = build_generator(lr_shape=(None, None, 3), upscale=cfg.UPSCALE)
+
     disc = build_discriminator(hr_shape=(cfg.HR_PATCH, cfg.HR_PATCH, 3))
     vgg = build_vgg_feature_extractor(layer_name="block5_conv4", hr_shape=(cfg.HR_PATCH, cfg.HR_PATCH, 3))
 
