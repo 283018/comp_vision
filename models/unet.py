@@ -14,7 +14,6 @@ def conv_block(x, filters, kernel_size=3, stride=1):
 
 
 def upsample_block(x, filters):
-    # TODO: change to something else?
     x = layers.Conv2DTranspose(filters, 3, strides=2, padding="same")(x)
     return layers.PReLU(shared_axes=[1, 2])(x)
 
@@ -25,7 +24,6 @@ def build_unet_upscaler(lr_shape=(cfg.LR_PATCH, cfg.LR_PATCH, 3), upscale=cfg.UP
     # encoder
     c1 = conv_block(inp, 64)
     c2 = conv_block(c1, 128)
-    # TODO: research which pooling to use
     p1 = layers.MaxPool2D(2)(c2)
 
     c3 = conv_block(p1, 256)
@@ -35,7 +33,6 @@ def build_unet_upscaler(lr_shape=(cfg.LR_PATCH, cfg.LR_PATCH, 3), upscale=cfg.UP
     b = conv_block(p2, 512)
 
     # decoder
-    # TODO: change to PixelShuffle?
     u1 = upsample_block(b, 256)
     u1 = layers.Concatenate()([u1, c3])
     u1 = conv_block(u1, 256)
@@ -51,7 +48,6 @@ def build_unet_upscaler(lr_shape=(cfg.LR_PATCH, cfg.LR_PATCH, 3), upscale=cfg.UP
     out = layers.Activation("sigmoid", dtype="float32")(out)    # explicit activation with casting
 
     # final resize to target
-    # TODO: check if needed
     if upscale > 1:
         out = layers.UpSampling2D(size=(upscale, upscale), interpolation="bilinear")(out)  # 4x -> 32->128
 
